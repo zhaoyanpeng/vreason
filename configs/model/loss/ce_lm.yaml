@@ -1,0 +1,4 @@
+name: 'LMLossHead'
+layers: []
+scaling: True
+infer_mode: ${..decoder.infer_mode}

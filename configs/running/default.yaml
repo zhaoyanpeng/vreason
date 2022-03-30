@@ -1,0 +1,8 @@
+peep_rate: 1 
+save_rate: 100 
+skip_save: False 
+save_last: False
+batch_size: 32
+epochs: 30 
+save_epoch: False 
+optim_rate: 1

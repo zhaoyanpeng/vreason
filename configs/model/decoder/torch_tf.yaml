@@ -1,0 +1,13 @@
+name: TorchTFDecHead
+m_dim: 512
+f_dim: 2048 
+num_head: 8
+num_layer: 2 
+t_dropout: 0.
+contx_size: 0
+block_size: 128
+norm_first: True
+activation: gelu
+infer_mode: ll
+max_dec_len: 101
+beg_dec_len: 0

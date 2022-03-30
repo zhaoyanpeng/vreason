@@ -1,0 +1,9 @@
+name: TorchTFEncHead
+m_dim: 512
+f_dim: 2048 
+num_head: 8
+num_layer: 2 
+t_dropout: 0.
+norm_first: True
+activation: gelu
+max_enc_len: 100

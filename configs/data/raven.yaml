@@ -1,0 +1,18 @@
+name: RAVEN-10000
+num_proc: ${num_proc}
+data_root: "" # input data path
+save_root: ${.data_root}/${model_time}_{model_name} # output data path
+data_name: "" 
+eval_name: "" 
+test_name: "" 
+data_seed: null
+train_samples: 1e9
+eval_samples: 250
+test_samples: 5000
+batch_size: ${running.batch_size}
+resolution: 160 
+splits: []
+tasks: []
+vq_vocab_size: ${..model.vqgan.vocab_size}
+special_token: {bos: <IMG|BOS>, eos: <IMG|EOS>, mask: <MASK>, sep: <SEP>, unk: <UNK>, pad: <PAD>}
+

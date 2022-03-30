@@ -1,0 +1,18 @@
+alias_root: "" 
+model_root: "" 
+alias_name: "test"
+model_name: "test"
+model_file: ""
+model_time:
+blockprint: False
+monitor: Monitor
+worker: VQGAN 
+verbose: False
+seed: 1213
+eval: True 
+rank: -1
+mode: "ddp"
+num_proc: 0 # always 0 in ddp mode 
+num_gpus: 4 
+port: 22829
+dist_url: "tcp://localhost:${port}"
