@@ -1,0 +1,16 @@
+name: CLEVR 
+version: 0.0.1
+num_proc: ${num_proc}
+data_root: "" # input data path
+save_root: ${.data_root}/${model_time}_{model_name} # output data path
+data_name: "CLEVR_train_scenes.0.json" 
+eval_name: "CLEVR_val_scenes.0.json" 
+test_name: "" 
+data_seed: null
+train_samples: null # could be list representing a chunk or an index set
+eval_samples: [0, 50]
+test_samples: [50, 100]
+batch_size: ${running.batch_size}
+crop_size: [29, 64, 192, 192] # top, left, height, width
+resize_size: 128
+max_num_obj: 11

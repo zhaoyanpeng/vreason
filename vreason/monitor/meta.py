@@ -77,7 +77,7 @@ class Monitor(object):
         if self.cfg.optimizer.use_lars:
             adjust_learning_rate(self.cfg.optimizer, self.optimizer, self.dataloader, step)
 
-        inc = 0 
+        inc = 1 
         force_eval = False # recommended by SGDR
         warmup = not self.cfg.optimizer.use_lars and self.cfg.optimizer.warmup and \
             (self.total_step + inc) <= self.cfg.optimizer.warmup_steps
@@ -90,7 +90,10 @@ class Monitor(object):
             lrs = [param_group['lr'] for param_group in self.optimizer.param_groups]
             force_eval = lrs == self.scheduler.base_lrs
             lrs = [f"{lr:.2e}" for lr in lrs]
-            self.echo(f"warmup lr: {' '.join(lrs)} @ {self.total_step}")
+            if (self.total_step + inc) <= 50 or (
+                self.cfg.optimizer.warmup_steps > 50 and (self.total_step + inc) % self.cfg.running.peep_rate == 0
+            ): 
+                self.echo(f"warmup lr: {' '.join(lrs)} @ {self.total_step}")
 
         return force_eval, warmup 
 

@@ -1,0 +1,21 @@
+name: SlotAttnEncHead 
+block: SlotAttnBlock 
+m_dim: 64 # model
+f_dim: 128 # forward
+num_slot: 10 
+num_head: 1 
+num_layer: 1 
+p_dropout: 0.0 # position dropout
+t_dropout: 0.0 # transformer dropout
+attn_dropout: 0.0 # 
+proj_dropout: ${.t_dropout}
+attn_cls_intra: SlotAttention
+attn_cls_inter: null
+qk_scale: null
+qkv_bias: False
+epsilon: 1e-8
+niter: 3
+activation: relu 
+kernel_size: 5
+input_resolution: ${...data.resize_size}
+output_resolution: null 

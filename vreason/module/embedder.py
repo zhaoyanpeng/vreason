@@ -1,4 +1,8 @@
 import torch
+from torch import nn
+import numpy as np
+
+__all__ = ["PartiallyFixedEmbedding", "SoftPositionalEncoder"]
 
 class PartiallyFixedEmbedding(torch.nn.Module):
     def __init__(self, vocab, fixed_weight, word_dim=-1, out_dim=-1):
@@ -79,3 +83,27 @@ class PartiallyFixedEmbedding(torch.nn.Module):
         word_emb = torch.nn.functional.embedding(X, weight, None, None, 2.0, False, False)
         word_emb = self.linear(word_emb)
         return word_emb
+
+
+class SoftPositionalEncoder(nn.Module):
+    def __init__(self, output_size, resolution, input_size=4, bias=True):
+        super().__init__()
+        grid = self.build_grid(resolution)
+        self.register_buffer("grid", grid)
+        self.linear = nn.Linear(input_size, output_size, bias=bias)
+    
+    @staticmethod
+    def build_grid(resolution):
+        size = [np.linspace(0., 1., num=k) for k in resolution]
+        grid = np.meshgrid(*size, sparse=False, indexing="ij")
+        grid = np.stack(grid, axis=-1)
+        grid = np.reshape(grid, [resolution[0], resolution[1], -1])
+        grid = grid[None].astype(np.float32)
+        grid = np.concatenate([grid, 1.0 - grid], axis=-1)
+        return torch.from_numpy(grid) 
+    
+    def forward(self, x):
+        return x + self.linear(self.grid)
+
+    def encode(self, x):
+        return self.linear(self.grid)

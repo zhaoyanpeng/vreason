@@ -1,0 +1,7 @@
+name: SlotCNNDecHead 
+m_dim: 64 # model
+num_slot: 10 
+activation: relu 
+kernel_size: 5
+input_resolution: [8, 8] 
+output_resolution: ${...data.resize_size}

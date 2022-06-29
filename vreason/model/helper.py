@@ -2,7 +2,10 @@ from omegaconf import OmegaConf
 import os, re
 import torch
 
-from taming.models.vqgan import VQModel, GumbelVQ
+try:
+    from taming.models.vqgan import VQModel, GumbelVQ
+except Exception as e:
+    VQModel = GumbelVQ = None
 
 def load_config(config_path, display=False):
     config = OmegaConf.load(config_path)

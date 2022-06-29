@@ -2,8 +2,11 @@ import torch
 import numpy as np
 from omegaconf.listconfig import ListConfig
 
-from taming.data.custom import RavenBase, RavenData
-from taming.data.raven import RavenVQGAN
+try:
+    from taming.data.custom import RavenBase, RavenData
+    from taming.data.raven import RavenVQGAN
+except Exception as e:
+    RavenBase = RavenData = RavenVQGAN = object 
 
 from . import DatasetCatalog, register_indexer
 from ..util import shorten_name 
@@ -95,7 +98,7 @@ class SeqRavenCollator:
         }
         return self._naive_collator(union)
 
-def build_dataloader(cfg, dataset, train, collate_fn, echo, msg=""):
+def build_dataloader(cfg, dataset, train, collate_fn, echo, msg="", pin_memory=True):
     if not train: 
         sampler = torch.utils.data.SequentialSampler(dataset)
     else:
@@ -106,7 +109,7 @@ def build_dataloader(cfg, dataset, train, collate_fn, echo, msg=""):
         num_workers=cfg.num_proc,
         shuffle=False,
         sampler=sampler,
-        pin_memory=True, 
+        pin_memory=pin_memory, 
         collate_fn=collate_fn
     )
     echo(f"Load {len(data_loader)} ({len(dataset)}) batches ({msg}).")

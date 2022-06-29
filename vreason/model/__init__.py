@@ -1,6 +1,7 @@
 from .helper import * 
 from .vq_encoder import VQGANEncoder
 from .raven_solver import RavenSolver, NeoRavenSolver 
+from .slot_learner import SlotLearner
 
 from fvcore.common.registry import Registry
 
@@ -15,3 +16,4 @@ def build_main_model(cfg, echo):
 VQ_MODELS_REGISTRY.register(VQGANEncoder)
 VQ_MODELS_REGISTRY.register(RavenSolver)
 VQ_MODELS_REGISTRY.register(NeoRavenSolver)
+VQ_MODELS_REGISTRY.register(SlotLearner)

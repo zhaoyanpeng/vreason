@@ -9,8 +9,11 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 from fvcore.common.registry import Registry
 
-from .decoder_head import MetaDecHead
+from . import MetaDecHead, DECODER_HEADS_REGISTRY
 
+__all__ = ["GPTDecHead", "NeoGPTDecHead"]
+
+@DECODER_HEADS_REGISTRY.register()
 class GPTDecHead(MetaDecHead):
     def __init__(self, cfg, token_vocab, **kwargs):
         super().__init__(cfg, token_vocab)
@@ -263,6 +266,7 @@ class GPTDecHead(MetaDecHead):
         return all_logits, o_seqs.contiguous(), None, {}
 
 
+@DECODER_HEADS_REGISTRY.register()
 class NeoGPTDecHead(MetaDecHead):
     def __init__(self, cfg, token_vocab, **kwargs):
         super().__init__(cfg, token_vocab)

@@ -21,9 +21,9 @@ class MetaDecHead(nn.Module):
     def __init__(self, cfg, token_vocab):
         super(MetaDecHead, self).__init__()
         self.token_vocab = token_vocab
-        self.max_dec_len = cfg.max_dec_len
-        self.beg_dec_len = cfg.beg_dec_len
-        self.infer_mode = cfg.infer_mode 
+        self.max_dec_len = getattr(cfg, "max_dec_len", 0)
+        self.beg_dec_len = getattr(cfg, "beg_dec_len", 0)
+        self.infer_mode = getattr(cfg, "infer_mode", 0) 
     def _reset_parameters(self):
         pass
     @property

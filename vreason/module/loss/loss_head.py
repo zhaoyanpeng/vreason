@@ -138,3 +138,36 @@ class LMLossHead(MetaLossHead):
         loss, (ntoken, losses) = self._estimate_loss(logits, x2, *args, **kwargs)
         extra = {"ntoken": ntoken, "main_loss": loss, "nsample": nsample, "ntrue": ntrue}
         return loss, (ntoken, extra)
+
+@LOSS_HEADS_REGISTRY.register()
+class MSELossHead(MetaLossHead):
+    def __init__(self, cfg, token_vocab, **kwargs):
+        super().__init__(cfg, token_vocab)
+        self.loss_fn = nn.MSELoss()
+        self.reduce = False 
+
+    def report(self, gold_file=None):
+        # compute accuracies, called every epoch
+        result = ""
+        return result 
+
+    def _estimate_loss(self, logits, x2, *args, **kwargs):
+        loss = self.loss_fn(logits, x2) 
+        losses = loss.detach() * x2.shape[0]
+        return loss, (x2.shape[0], losses.item())
+
+    def infer(self, x1, x2, *args, **kwargs): 
+        results = self._estimate_loss(x1, x2)
+        return results 
+
+    def predict(self, x1, x2, negative):
+        pass
+
+    def forward(self, x1, x2, *args, negative=None, **kwargs):
+        if not self.training:
+            loss, (ntoken, losses) = self.infer(x1, x2, *args, **kwargs)
+            extra = {"nsample": ntoken, "main_loss": losses}
+            return loss, (ntoken, extra)
+        loss, (ntoken, losses) = self._estimate_loss(x1, x2, *args, **kwargs)
+        extra = {"nsample": ntoken, "main_loss": losses}
+        return loss, (ntoken, extra)
