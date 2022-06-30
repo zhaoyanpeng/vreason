@@ -10,3 +10,6 @@ from .raven import (
 from .clevr import (
     build_clevr_image_data
 )
+from .abscene import (
+    build_abscene_image_data
+)

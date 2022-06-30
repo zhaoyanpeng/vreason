@@ -21,13 +21,13 @@ class SlotLearner(nn.Module):
 
     def forward(self, image, mask=None, nobj=None, analyze=False, vfile=None, **kwargs):
         slots, attns, *_ = self.encoder_head(image) 
-        x_out, masks, *_ = self.decoder_head(slots)
+        x_out, masks, x_all, *_ = self.decoder_head(slots)
         loss, outs = self.loss_head(image, x_out)
         self.set_stats(outs[1], mask, masks, nobj) 
         if analyze:
             self.analyze(
                 true_image=image, pred_image=x_out, true_mask=mask, pred_mask=masks,
-                image_file=vfile,
+                image_file=vfile, slot_image=x_all
             )
         return loss, outs 
 

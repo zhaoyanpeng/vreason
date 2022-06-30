@@ -24,10 +24,14 @@ def get_binary_masks(masks, width=480, height=320):
     
     bin_masks = dict()
     npixel = width * height
+    gt_mask = np.array([0] * npixel)
     for imask, mask in masks.items():
         mask = str2mask(mask)
+        gt_mask |= mask
         mask = mask.reshape((height, width)).astype(np.uint8)
         bin_masks[int(imask)] = mask
+    gt_mask = (1 - gt_mask).reshape((height, width)).astype(np.uint8)
+    bin_masks[0] = gt_mask # imask starts from 1 so we can use 0 to index the background
     return bin_masks
 
 class ClevrImageData(torch.utils.data.Dataset):
@@ -50,6 +54,7 @@ class ClevrImageData(torch.utils.data.Dataset):
         self.crop_size = list(cfg.crop_size)[:4]
 
         self.max_num_obj = cfg.max_num_obj
+        self.add_bg_mask = cfg.add_bg_mask
 
         # load data
         self.dataset = list()
@@ -74,7 +79,7 @@ class ClevrImageData(torch.utils.data.Dataset):
             item = {
                 "image": scene["image_index"],
                 "bbox": scene["obj_bbox"],
-                "mask": bin_masks, # list 
+                "mask": bin_masks, # dict
                 "name": name,
                 "nobj": nobj, 
             }
@@ -109,9 +114,12 @@ class ClevrImageData(torch.utils.data.Dataset):
                     self.resize_size, interpolation=InterpolationMode.BILINEAR
                 )) for k, m in sample["mask"].items()
             }
-            #mask = np.stack([mask[i + 1] for i in range(len(sample["mask"]))], axis=0)
+            #mask = np.stack([mask[i] for i in range(sample["nobj"] + 1)], axis=0)
             pad = [np.zeros(self.resize_size, dtype=np.float32)] * (self.max_num_obj - sample["nobj"]) 
-            mask = np.stack([mask[i + 1] for i in range(sample["nobj"])] + pad, axis=0)
+            if self.add_bg_mask:
+                mask = np.stack([mask[i] for i in range(sample["nobj"] + 1)] + pad, axis=0)
+            else:
+                mask = np.stack([mask[i + 1] for i in range(sample["nobj"])] + pad, axis=0)
         return image, mask, vfile
 
     def __getitem__(self, index):

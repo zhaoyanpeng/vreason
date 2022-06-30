@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel
 
 from .raven_solver import Monitor as Meta
 from ..model import build_main_model
-from ..data import build_clevr_image_data as build_data
+from ..data import build_clevr_image_data, build_abscene_image_data
 
 from ..util import numel, shorten_name, ExpDecayLR
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
@@ -31,7 +31,7 @@ class Monitor(Meta):
     def build_data(self):
         self.dataloader, self.evalloader, self.testloader, \
         self.encoder_vocab, self.decoder_vocab, self.cate_vocab = \
-        build_data(
+        eval(f"build_{self.cfg.data.name.lower()}_image_data")(
             self.cfg.data, not self.cfg.eval, self.echo
         )
 
@@ -114,9 +114,13 @@ class Monitor(Meta):
         return ""
         
     def main_eval(self, dataloader, samples=float("inf"), iepoch=0):
+
         if isinstance(samples, (tuple, list, ListConfig)): 
             samples = list(samples)
             samples = samples[1] - samples[0]
+        elif samples is None:
+            samples = float("inf")
+
         self.model.reset()
         losses, istep, nsample, nchunk, nbatch = 0, 0, 0, 1, len(dataloader)
         device_ids = [i for i in range(self.cfg.num_gpus)]

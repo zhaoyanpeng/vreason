@@ -1,18 +1,18 @@
-name: CLEVR 
+name: ABSCENE 
 version: 0.0.1
 num_proc: ${num_proc}
 data_root: "" # input data path
 more_root: ${.data_root} # extra root, might be useful when images & text are in separate directories
 dump_root: ${.data_root}/${model_time}_{model_name} # in case there is output data
-data_name: "CLEVR_train_scenes.0.json" 
-eval_name: "CLEVR_val_scenes.0.json" 
-test_name: "" 
+data_name: [0, 900]  
+eval_name: [900, 950] 
+test_name: null #[950, 1002] 
 data_seed: null
 train_samples: null # could be list representing a chunk or an index set
-eval_samples: [0, 50]
-test_samples: [50, 100]
+eval_samples: null  
+test_samples: null 
 batch_size: ${running.batch_size}
-crop_size: [29, 64, 192, 192] # top, left, height, width
+crop_size: [0, 50, 400, 400] # top, left, height, width
 resize_size: 128
 max_num_obj: 11
 add_bg_mask: False

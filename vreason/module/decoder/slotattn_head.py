@@ -71,5 +71,5 @@ class SlotCNNDecHead(MetaDecHead):
         
         x_out, masks = x.reshape((B, S) + x.shape[1:]).split((self.I, 1), dim=2)
         masks = masks.softmax(1) # (B, S, C, H, W) where C = 3 (self.I) or 1 
-        x_out = (x_out * masks).sum(1)
-        return x_out, masks.squeeze(2), None, {}
+        x_avg = (x_out * masks).sum(1)
+        return x_avg, masks.squeeze(2), x_out, {}
