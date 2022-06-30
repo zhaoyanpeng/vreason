@@ -19,12 +19,20 @@ class SlotLearner(nn.Module):
         self.meter_train = Stats()
         self.meter_infer = Stats()
 
-    def forward(self, image, mask=None, nobj=None, analyze=False, **kwargs):
+    def forward(self, image, mask=None, nobj=None, analyze=False, vfile=None, **kwargs):
         slots, attns, *_ = self.encoder_head(image) 
         x_out, masks, *_ = self.decoder_head(slots)
         loss, outs = self.loss_head(image, x_out)
         self.set_stats(outs[1], mask, masks, nobj) 
+        if analyze:
+            self.analyze(
+                true_image=image, pred_image=x_out, true_mask=mask, pred_mask=masks,
+                image_file=vfile,
+            )
         return loss, outs 
+
+    def analyze(self, **kwargs):
+        self.last_batch = {k: v for k, v in kwargs.items()}
 
     def collect_state_dict(self):
         return { 

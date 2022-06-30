@@ -21,8 +21,9 @@ from ..util import numel, shorten_name
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 
 class Monitor(Meta):
-    def __init__(self, cfg, echo, device):
+    def __init__(self, cfg, echo, device, skip_init=False):
         super(Monitor, self).__init__()
+        if skip_init: return #
         self.cfg = cfg
         self.echo = echo
         self.device = device

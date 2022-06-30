@@ -152,9 +152,10 @@ class Monitor(object):
     def step(self):
         if self.cfg.running.optim_rate > 1:
             self.model.reduce_grad(cfg.running.optim_rate, sync=False)
-        torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.cfg.optimizer.max_gnorm
-        )      
+        if self.cfg.optimizer.max_gnorm is not None:
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.cfg.optimizer.max_gnorm
+            )
         self.optimizer.step()
 
     def epoch(self, iepoch):

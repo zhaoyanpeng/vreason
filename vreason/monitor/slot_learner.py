@@ -14,7 +14,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 
-from .meta import Monitor as Meta 
+from .raven_solver import Monitor as Meta
 from ..model import build_main_model
 from ..data import build_clevr_image_data as build_data
 
@@ -23,21 +23,7 @@ from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 
 class Monitor(Meta):
     def __init__(self, cfg, echo, device):
-        super(Monitor, self).__init__()
-        self.cfg = cfg
-        self.echo = echo
-        self.device = device
-        self.build_data()
-        model = build_main_model(cfg, echo)
-        tunable_params = model.build(**{
-            "encoder_vocab": self.encoder_vocab, 
-            "decoder_vocab": self.decoder_vocab,
-        })
-        self.model = DistributedDataParallel(
-            model, device_ids=[cfg.rank], find_unused_parameters=True
-        ) if torch.distributed.is_initialized() else model 
-        self.model.train(not cfg.eval)
-        self.build_optimizer(tunable_params)
+        super(Monitor, self).__init__(cfg, echo, device)
 
     def show_batch(self, batch):
         pass
@@ -57,7 +43,7 @@ class Monitor(Meta):
         mask = sample["mask"]
         mask = torch.from_numpy(mask).to(self.device)
 
-        return {"image": image, "mask": mask}
+        return {"image": image, "mask": mask, "vfile": sample["vfile"]}
 
     def epoch(self, iepoch):
         self.model.reset()
@@ -151,6 +137,7 @@ class Monitor(Meta):
             bsize = batch_dict["image"].shape[0]
 
             batch_dict["infer"] = True
+            batch_dict["analyze"] = True
 
             loss_mean, (ntoken, _) = self.model(**batch_dict)
             loss = loss_mean * ntoken
@@ -173,68 +160,3 @@ class Monitor(Meta):
         if stats != "": # could be empty
             self.echo(f"EVAL STATS: {model.stats()}")
         return model.report()
-
-    def build_optimizer(self, tunable_params={}, verbose=True):
-        if not self.model.training:
-            return
-        self.params = (
-            list(tunable_params.values())
-        )
-        for k, v in tunable_params.items():
-            if self.cfg.rank == 0:
-                pass #self.echo(f"{k} {v.size()}")
-        ddp = isinstance(self.model, DistributedDataParallel)
-        for k, v in self.model.named_parameters():
-            k = re.sub("^module\.", "", k) if ddp else k
-            if f"{k}" not in tunable_params:
-                v.requires_grad = False
-        self.echo(f"# param {numel(self.model) / 1e6:.2f}M # tunable {numel(self.model, True) / 1e6:.2f}M.")
-
-        # create param. groups by `decay/no_decay'
-        decay = set()
-        no_decay = set()
-        for k, v in self.model.named_parameters():
-            k = re.sub("^module\.", "", k) if ddp else k
-            if f"{k}" not in tunable_params:
-                continue
-            if v.ndim < 2 or "_embed" in k: # FIXME hack
-                no_decay.add(k)
-            elif v.ndim > 1:
-                decay.add(k)
-
-        inter_params = decay & no_decay
-        union_params = decay | no_decay
-        assert len(inter_params) == 0, f"{inter_params} in both decay / no_decay sets"
-        assert set(union_params) == set(tunable_params.keys()), f"not all the tunable are assigned to decay / no_decay sets"
-
-        param_groups = [
-            {"params": [tunable_params[k] for k in sorted(list(decay))], "weight_decay": self.cfg.optimizer.weight_decay},
-            {"params": [tunable_params[k] for k in sorted(list(no_decay))], "weight_decay": 0.0},
-        ]
-
-        if self.cfg.optimizer.use_lars:
-            self.optimizer = LARS(
-                param_groups,
-                lr=0.,
-                weight_decay=self.cfg.optimizer.weight_decay,
-                weight_decay_filter=exclude_bias_or_norm,
-                lars_adaptation_filter=exclude_bias_or_norm,
-            )
-        else:
-            ocfg = self.cfg.optimizer.optimizer
-            scfg = self.cfg.optimizer.scheduler
-            self.optimizer = getattr(torch.optim, ocfg[0])(param_groups, **ocfg[1])
-            self.scheduler = None if len(scfg) < 2 else getattr(
-                torch.optim.lr_scheduler, scfg[0]
-            )(self.optimizer, **scfg[1])
-        if not self.cfg.verbose or not verbose:
-            return
-        self.echo(f"Gradienting The Following Parameters:")
-        for k, v in self.model.named_parameters():
-            if v.requires_grad:
-                if k in decay:
-                    dm = "dt"
-                else:
-                    dm = "#"
-                self.echo(f"{k} {v.size()} {dm}")
-        self.echo(f"\n{self.model}")

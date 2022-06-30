@@ -36,7 +36,6 @@ class SlotCNNDecHead(MetaDecHead):
             nn.ConvTranspose2d(D, D, K, stride=1, padding=2, output_padding=0),
             _get_activation_fn.get(activation, nn.GELU),
             nn.ConvTranspose2d(D, 4, 3, stride=1, padding=1, output_padding=0),
-            _get_activation_fn.get(activation, nn.GELU),
         )
         self.input_resolution = (
             [cfg.input_resolution] * 2 if isinstance(cfg.input_resolution, int)
