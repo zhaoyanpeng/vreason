@@ -18,7 +18,7 @@ from .raven_solver import Monitor as Meta
 from ..model import build_main_model
 from ..data import build_clevr_image_data, build_abscene_image_data
 
-from ..util import numel, shorten_name, ExpDecayLR
+from ..util import numel, shorten_name, ExpDecayLR, SlotattnLR
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 
 class Monitor(Meta):

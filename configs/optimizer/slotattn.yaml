@@ -1,5 +1,5 @@
 use_lars: False 
-name: AdamW
+name: ${.opt_name}
 warmup: False 
 warmup_steps: 10000
 warmup_times: ${.warmup_steps} 
@@ -17,5 +17,7 @@ epochs: ${running.epochs}
 steps: []
 gamma: 0.5
 batch_sch: False # schedule lr per batch
-optimizer: [AdamW, {lr: '${optimizer.lr}', betas: '${optimizer.betas}'}]
-scheduler: [ExpDecayLR,{step_size: '${optimizer.decay_step}', gamma: '${optimizer.decay_rate}'}]
+opt_name: AdamW
+sch_name: ExpDecayLR
+optimizer: ['${optimizer.opt_name}',{lr: '${optimizer.lr}', betas: '${optimizer.betas}'}]
+scheduler: ['${optimizer.sch_name}',{step_size: '${optimizer.decay_step}', gamma: '${optimizer.decay_rate}', warmup_step: '${optimizer.warmup_steps}'}]

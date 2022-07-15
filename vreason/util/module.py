@@ -8,21 +8,42 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 
 class ExpDecayLR(StepLR):
-    def __init__(self, optimizer, step_size, gamma=0.5, last_epoch=-1, verbose=False):
+    def __init__(self, optimizer, step_size, gamma=0.5, last_epoch=-1, verbose=False, **kwargs):
         super().__init__(optimizer, step_size, gamma=gamma, last_epoch=last_epoch, verbose=verbose)
 
     def get_lr(self):
         if not self._get_lr_called_within_step:
             warnings.warn(
-                "To get the last learning rate computed by the scheduler, " + 
+                "To get the last learning rate computed by the scheduler, " +
                 "please use `get_last_lr()`.", UserWarning
             )
-        return self._get_closed_form_lr() 
+        return self._get_closed_form_lr()
 
     def _get_closed_form_lr(self):
         return [base_lr * self.gamma ** (self.last_epoch / self.step_size) for base_lr in self.base_lrs]
 
 torch.optim.lr_scheduler.ExpDecayLR = ExpDecayLR # append a module
+
+class SlotattnLR(StepLR):
+    def __init__(self, optimizer, step_size, warmup_step=0, gamma=0.5, last_epoch=-1, verbose=False, **kwargs):
+        self.warmup_step = warmup_step # will be needed in a function call of the base class
+        super().__init__(optimizer, step_size, gamma=gamma, last_epoch=last_epoch, verbose=verbose)
+
+    def get_lr(self):
+        if not self._get_lr_called_within_step:
+            warnings.warn(
+                "To get the last learning rate computed by the scheduler, " +
+                "please use `get_last_lr()`.", UserWarning
+            )
+        return self._get_closed_form_lr()
+
+    def _get_closed_form_lr(self):
+        factor = 1
+        if self.last_epoch < self.warmup_step:
+            factor = self.last_epoch / self.warmup_step
+        return [base_lr * factor * self.gamma ** (self.last_epoch / self.step_size) for base_lr in self.base_lrs]
+
+torch.optim.lr_scheduler.SlotattnLR = SlotattnLR # append a module
 
 class Stats(object):
     def __init__(self):

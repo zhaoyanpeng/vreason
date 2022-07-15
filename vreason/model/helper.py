@@ -41,7 +41,7 @@ def load_checkpoint(cfg, echo):
         echo(f"Loading from {model_file}")
     except Exception as e:
         echo(f"Failed to load the checkpoint `{model_file}` {e}")
-        return (None,) * 6
+        return (None,) * 2
     local_cfg = checkpoint["cfg"]
     local_str = OmegaConf.to_yaml(local_cfg)
     if cfg.verbose:
