@@ -13,10 +13,11 @@ eval_samples: [0, 50]
 test_samples: [50, 100]
 batch_size: ${running.batch_size}
 crop_size: [0, 0, 256, 256] # top, left, height, width
-resize_size: 256 
-max_txt_len: 50 
-txt_vocab_name: caption_train.all.topk.dict 
-vis_vocab_name: vis_vocab_is_null 
+resize_size: 256
+max_txt_len: 50
+num_txt_sample: 1 # max len of a caption is 50, change this should also change `max_text_len` accordingly
+txt_vocab_name: caption_train.all.topk.dict
+vis_vocab_name: vis_vocab_is_null
 vis_vocab_size: ${..model.vq.vocab_size}
 txt_special_token: {bos: <TXT|BOS>, eos: <TXT|EOS>, mask: <MASK>, sep: <SEP>, unk: <UNK>, pad: <PAD>}
 vis_special_token: {}

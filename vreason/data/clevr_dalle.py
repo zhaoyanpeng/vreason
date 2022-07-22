@@ -38,6 +38,7 @@ class ClevrImageTextData(torch.utils.data.Dataset):
         ])
 
         self.max_txt_len = cfg.max_txt_len
+        self.num_txt_sample = cfg.num_txt_sample
 
         # load (a subset of) data
         self.dataset = list()
@@ -73,14 +74,27 @@ class ClevrImageTextData(torch.utils.data.Dataset):
         image = (image / 127.5 - 1.0).astype(np.float32)
         return image, None, vfile
 
-    def __getitem__(self, index):
-        index, captions = self.dataset[index]
-        icaption = np.random.choice(len(captions), 1)[0] if self.train else 0 
-        caption = [self.encoder_vocab.BOS] + captions[icaption].lower().split(" ")
+    def preprocess_text(self, captions):
+        num_caption = len(captions)
+        num_txt_sample = num_caption if num_caption < self.num_txt_sample else self.num_txt_sample
+        if self.train: # sample a number & sample a number of text
+            num = 1 if num_txt_sample == 1 else np.random.choice(range(1, num_txt_sample + 1), 1)[0]
+            caption_indice = np.random.choice(num_caption, num, replace=False)
+        else: # use a single caption at test time
+            caption_indice = [0]
+
+        selected = " ".join([captions[i] for i in caption_indice])
+
+        caption = [self.encoder_vocab.BOS] + selected.lower().split(" ")
         caption = self.encoder_vocab(caption)
         caption = caption + [self.encoder_vocab.PAD_IDX] * (self.max_txt_len - len(caption))
         caption = caption[:self.max_txt_len] # truncate whatever
+        return caption
 
+    def __getitem__(self, index):
+        index, captions = self.dataset[index]
+
+        caption = self.preprocess_text(captions)
         image, _, vfile = self.preprocess_image(index=index)
         return {
             "text": caption,
