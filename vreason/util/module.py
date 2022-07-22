@@ -58,6 +58,8 @@ class Stats(object):
 
     def __call__(self, **kwargs):
         for k, v in kwargs.items():
+            if isinstance(v, torch.Tensor):
+                v = v.detach().cpu()
             self._stats[k] += v
 
 class AverageMeter(object):

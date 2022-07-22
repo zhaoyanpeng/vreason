@@ -13,6 +13,6 @@ batch_size: ${running.batch_size}
 resolution: 160 
 splits: []
 tasks: []
-vq_vocab_size: ${..model.vqgan.vocab_size}
+vq_vocab_size: ${..model.vq.vocab_size}
 special_token: {bos: <IMG|BOS>, eos: <IMG|EOS>, mask: <MASK>, sep: <SEP>, unk: <UNK>, pad: <PAD>}
 

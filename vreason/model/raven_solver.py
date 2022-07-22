@@ -37,7 +37,7 @@ class MetaSolver(nn.Module):
             extra_lines = extra_repr.split('\n')
         child_lines = []
         for key, module in self._modules.items():
-            if key == "vqgan": # filter out VAGAN module
+            if key == "vq": # filter out VAGAN module
                 continue
             mod_str = repr(module)
             mod_str = _addindent(mod_str, 2)
@@ -92,6 +92,9 @@ class MetaSolver(nn.Module):
             module.train(mode)
         return self
 
+    def tokenize_images(self, v):
+        raise NotImplemented
+
     def collect_state_dict(self):
         return { 
             "embedder_head": self.embedder_head.state_dict(), 
@@ -107,11 +110,11 @@ class MetaSolver(nn.Module):
         tunable_params = dict()
         mcfg = self.cfg.model 
         
-        vq_embed, vqgan = self.register_vqgan(mcfg)
+        vq_embed, vq = self.register_vq(mcfg)
         vq_vocab_size, emb_size = vq_embed.shape
 
         if self.cfg.eval:
-            self.vqgan = vqgan # might need the model to decode codes
+            self.vq = vq # might need the model to decode codes
             local_cfg, head_sd = load_checkpoint(self.cfg, self.echo)
 
             self.embedder_head = build_encoder_head(
@@ -128,7 +131,7 @@ class MetaSolver(nn.Module):
             self.loss_head = build_loss_head(mcfg.loss, decoder_vocab)
             self.loss_head.load_state_dict(head_sd["loss_head"])
         else:
-            self.vqgan = None # only need the weights of VQ 
+            self.vq = None # only need the weights of VQ 
             self.embedder_head = build_encoder_head(
                 mcfg.embedder, encoder_vocab, emb_size=emb_size, fixed_weight=vq_embed
             )
@@ -192,7 +195,7 @@ class RavenSolver(MetaSolver):
         shape = sequence.shape + (-1,)
         sequence = sequence.view(-1)
         if self.vq_embed is None:# method A 
-            seq_emb = self.vqgan.quantize.get_codebook_entry(sequence, None)
+            seq_emb = self.vq.quantize.get_codebook_entry(sequence, None)
             seq_emb = seq_emb.view(shape)
         else: # method B
             seq_emb_new = self.vq_embed[sequence]
@@ -201,21 +204,21 @@ class RavenSolver(MetaSolver):
         #print((seq_emb == seq_emb_new).all())
         return seq_emb
 
-    def register_vqgan(self, mcfg):
-        vqgan = from_pretrained_vqgan(mcfg.vqgan)
-        quantizer = vqgan.quantize
+    def register_vq(self, mcfg):
+        vq = from_pretrained_vqgan(mcfg.vq)
+        quantizer = vq.quantize
         vocab_size, emb_size = quantizer.n_e, quantizer.e_dim
-        self.register_buffer("vq_embed", vqgan.quantize.embedding.weight)
-        return self.vq_embed, vqgan 
+        self.register_buffer("vq_embed", vq.quantize.embedding.weight)
+        return self.vq_embed, vq 
 
 
 class NeoRavenSolver(MetaSolver):
     def __init__(self, cfg, echo):
         super().__init__(cfg, echo)
 
-    def register_vqgan(self, mcfg):
-        vqgan = from_pretrained_vqgan(mcfg.vqgan)
-        return vqgan.quantize.embedding.weight, vqgan
+    def register_vq(self, mcfg):
+        vq = from_pretrained_vqgan(mcfg.vq)
+        return vq.quantize.embedding.weight, vq
 
     def forward(self, sequence, negative, analyze=False, **kwargs):
         # a shared embedder (b/w encoder and decoder) to mimic GPT 

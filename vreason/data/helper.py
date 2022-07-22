@@ -35,7 +35,7 @@ class Indexer:
             Indices must be a contiguous `int` sequence. The 
             first four words must be `PAD`,`UNK`,`BOS`,`EOS`.
     """
-    def __init__(self, index_file=None, extra_keys=[], name="", specials={}, front_special=True):
+    def __init__(self, index_file=None, extra_keys=[], name="", specials={}, front_special=True, add_special=True):
         self.word2idx = {}
         self.idx2word = {}
         self._done = False
@@ -43,7 +43,7 @@ class Indexer:
         default_specials={"pad": "<pad>", "unk": "<unk>", "bos": "<s>", "eos": "</s>"}
         specials = specials if len(specials) > 0 else default_specials 
 
-        if front_special: # special at the front
+        if add_special and front_special: # special at the front
             self._add_special(specials)
 
         if index_file is not None:
@@ -51,7 +51,7 @@ class Indexer:
         if len(extra_keys) > 0:
             self.from_list(extra_keys)
 
-        if not front_special: # special at the end
+        if add_special and not front_special: # special at the end
             self._add_special(specials)
 
         self._done = True 
@@ -79,8 +79,8 @@ class Indexer:
                 line = line.strip().split()
                 word, idx = line[0], int(line[1])
                 if self.word2idx.get(word, None) is None:
-                    assert idx == len(self.word2idx)
-                    self.word2idx[word] = idx
+                    #assert idx == len(self.word2idx), "incorrect word ids"
+                    self.word2idx[word] = len(self.word2idx) #idx
         self.idx2word = {} # rewrite
         for word, idx in self.word2idx.items():
             self.idx2word[idx] = word
@@ -142,14 +142,14 @@ class Indexer:
     def __len__(self):
         return len(self.word2idx)
 
-def make_vocab(index_file, extra_keys=[], name="", specials={}, front_special=True):
+def make_vocab(index_file, extra_keys=[], name="", specials={}, front_special=True, add_special=True):
     vocab = Indexer(
-        index_file, extra_keys, name, specials=specials, front_special=front_special
+        index_file, extra_keys, name, specials=specials, front_special=front_special, add_special=add_special
     )
     return vocab
 
 def register_indexer(
-    name, index_file, extra_keys=[], override=False, specials={}, front_special=True
+    name, index_file, extra_keys=[], override=False, specials={}, front_special=True, add_special=True
 ):
     """
     Register a pre-defined indexer from a file.
@@ -168,7 +168,7 @@ def register_indexer(
             name, 
             lambda: make_vocab(
                 index_file, extra_keys=extra_keys, name=name,
-                specials=specials, front_special=front_special
+                specials=specials, front_special=front_special, add_special=add_special
             ),
             override=override
         )

@@ -20,6 +20,9 @@ from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 class Monitor(object):
     def __init__(self):
         super(Monitor, self).__init__()
+        # save the k-best checkpoints
+        self.save_metric = None
+        self.kbest_cache = None 
 
     def build_data(self):
         pass
@@ -40,7 +43,7 @@ class Monitor(object):
         self.total_inst = 0
         self.optim_step = 0
         self.start_time = time.time()
-        #self.scaler = torch.cuda.amp.GradScaler()
+        self.scaler = torch.cuda.amp.GradScaler()
         #self.save() 
         if self.cfg.data.data_seed is not None: # reset data randomness
             self.echo(f"Random seed ({self.cfg.data.data_seed}) for data sampling.")
@@ -166,9 +169,37 @@ class Monitor(object):
         
     def evaluate(self, dataloader, samples=float("inf"), iepoch=0):
         pass
-    
-    def save(self):
+
+    def save(self, metric=-float("inf")):
+        def update_kbest_cache(kbest_cache, metric, ckpt):
+            save = False
+            for split, (old_metric, _) in enumerate(kbest_cache):
+                if metric > old_metric:
+                    save = True
+                    break
+            if not save:
+                return kbest_cache, (-float("inf"), None), False 
+            a = kbest_cache[:split]
+            c = kbest_cache[split:-1]
+            b = [(metric, ckpt)]
+            removed = kbest_cache[-1]
+            return a + b + c, removed, True
+
         fsave = f"{self.cfg.alias_root}/{self.cfg.alias_name}/{self.total_step:08d}.pth"
+
+        if self.kbest_cache is not None:
+            metric = self.save_metric or metric 
+            self.kbest_cache, removed, save = update_kbest_cache(self.kbest_cache, metric, fsave) 
+            if not save:
+                fsave = f"{self.cfg.alias_root}/{self.cfg.alias_name}/last.pth"
+                pass #return None # exit # save the last anyways 
+            if removed[-1] is not None:
+                try:
+                    os.remove(removed[-1])
+                    self.echo(f"Del {removed[-1]}")
+                except OSError as e:
+                    self.echo(f"Error: {e.filename} - {e.strerror}.")
+
         self.echo(f"Saving the checkpoint to {fsave}")
         model = self.model.module if isinstance(self.model, DistributedDataParallel) else self.model
         checkpoint = {

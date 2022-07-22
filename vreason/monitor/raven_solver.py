@@ -80,8 +80,6 @@ class Monitor(Meta):
 
             self.timeit(all_time, key="data")
 
-            batch_dict = self.make_batch(batch)
-
             loss, _ = self.model(**batch_dict)
             loss.backward()
             if self.optim_step % self.cfg.running.optim_rate == 0: 

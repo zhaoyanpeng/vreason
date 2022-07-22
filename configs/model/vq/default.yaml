@@ -1,7 +1,10 @@
 # VQGAN Param.
+name: PretrainedVQGAN
+gumbel: False
 model_root: "" 
 model_name: ""
 model_file: ""
 model_time: ""
 vocab_size: 1024
 embed_size: 256
+max_vis_len: 256

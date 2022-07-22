@@ -1,5 +1,4 @@
 import os, sys
-from omegaconf import DictConfig, OmegaConf
 import logging
 import torch
 import hydra
@@ -9,6 +8,9 @@ import torch.multiprocessing as mp
 
 from torch.nn import DataParallel
 from torch.nn.parallel import DistributedDataParallel
+
+from omegaconf import DictConfig, OmegaConf
+OmegaConf.register_new_resolver("sum", lambda x, y : x + y)
 
 from vreason.util import seed_all_rng, setup_logger
 from vreason.monitor import *

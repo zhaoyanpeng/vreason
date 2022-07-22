@@ -13,3 +13,6 @@ from .clevr import (
 from .abscene import (
     build_abscene_image_data
 )
+from .clevr_dalle import (
+    build_clevr_image_text_data
+)

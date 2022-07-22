@@ -2,7 +2,13 @@ import torch
 from torch import nn
 import numpy as np
 
-__all__ = ["PartiallyFixedEmbedding", "SoftPositionalEncoder"]
+__all__ = [
+    "PartiallyFixedEmbedding",
+    "SoftPositionalEncoder",
+    "Hard1DEmbedder",
+    "Hard2DEmbedder",
+    "Soft2DEmbedder",
+]
 
 class PartiallyFixedEmbedding(torch.nn.Module):
     def __init__(self, vocab, fixed_weight, word_dim=-1, out_dim=-1):
@@ -107,3 +113,99 @@ class SoftPositionalEncoder(nn.Module):
 
     def encode(self, x):
         return self.linear(self.grid)
+
+class Hard1DEmbedder(nn.Module):
+    def __init__(
+        self, num_token, embed_dim, resolution, tok_padding_idx=None, use_pos_padding=False
+    ):
+        super().__init__()
+        self.grid_size = self.build_grid(resolution)
+        self.num_token = num_token # + self.grid_size
+        self.tok_padding_idx = tok_padding_idx
+        self.tok_embed = nn.Embedding(self.num_token, embed_dim, padding_idx=self.tok_padding_idx)
+        self.pos_padding_idx = None if not use_pos_padding else self.grid_size 
+        self.pos_embed = nn.Embedding(
+            self.grid_size if self.pos_padding_idx is None else self.grid_size + 1,
+            embed_dim, padding_idx=self.pos_padding_idx
+        )
+    
+    @staticmethod
+    def build_grid(resolution):
+        resolution = np.prod(list(resolution)) 
+        return resolution
+    
+    def encode(self, x):
+        B, L = x.shape[:2]
+        pos_indice = torch.arange(L, device=x.device)
+        if self.pos_padding_idx is not None:
+            pad_indice = torch.where(
+                x == self.tok_padding_idx, self.pos_padding_idx, pos_indice
+            )
+            pos = self.pos_embed(pad_indice)
+        else:
+            pos = self.pos_embed(pos_indice)
+        if self.tok_padding_idx is not None:
+            pad_indice = pos_indice + (self.num_token - self.grid_size)
+            x = torch.where(x == self.tok_padding_idx, pad_indice, x)
+        return self.tok_embed(x), pos 
+
+    def forward(self, x):
+        tok, pos = self.encode(x)
+        return tok + pos 
+
+class Hard2DEmbedder(nn.Module):
+    def __init__(
+        self, num_token, embed_dim, resolution, **kwargs 
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        grid_size = self.build_grid(resolution)
+        self.tok_embed = nn.Embedding(num_token, embed_dim)
+        self.col_embed = nn.Embedding(grid_size[1], embed_dim)
+        self.row_embed = nn.Embedding(grid_size[0], embed_dim)
+    
+    @staticmethod
+    def build_grid(resolution):
+        return resolution[:2]
+
+    def encode(self, x):
+        B, L = x.shape[:2]
+        H = W = int(L ** 0.5)
+        pos_indice = torch.arange(H, device=x.device)
+        col = self.col_embed(pos_indice).unsqueeze(1)
+        row = self.row_embed(pos_indice).unsqueeze(0)
+        pos = (row + col).reshape(-1, self.embed_dim)
+        return self.tok_embed(x), pos 
+
+    def forward(self, x):
+        tok, pos = self.encode(x)
+        return tok + pos 
+
+class Soft2DEmbedder(nn.Module):
+    def __init__(
+        self, num_token, embed_dim, resolution, bias=True, **kwargs
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        grid = self.build_grid(resolution)
+        self.register_buffer("grid", grid)
+        self.tok_embed = nn.Embedding(num_token, embed_dim)
+        self.pos_embed = nn.Linear(4, embed_dim, bias=bias)
+    
+    @staticmethod
+    def build_grid(resolution):
+        size = [np.linspace(0., 1., num=k) for k in resolution]
+        grid = np.meshgrid(*size, sparse=False, indexing="ij")
+        grid = np.stack(grid, axis=-1)
+        grid = np.reshape(grid, [resolution[0], resolution[1], -1])
+        grid = grid[None].astype(np.float32)
+        grid = np.concatenate([grid, 1.0 - grid], axis=-1)
+        return torch.from_numpy(grid) 
+    
+    def encode(self, x):
+        pos = self.pos_embed(self.grid).reshape(-1, self.embed_dim)
+        return self.tok_embed(x), pos 
+
+    def forward(self, x):
+        tok, pos = self.encode(x)
+        return tok + pos 

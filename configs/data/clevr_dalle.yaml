@@ -1,0 +1,22 @@
+name: CLEVR 
+version: 0.0.1
+num_proc: ${num_proc}
+data_root: "" # input data path
+more_root: ${.data_root} # extra root, might be useful when images & text are in separate directories
+dump_root: ${.data_root}/${model_time}_{model_name} # in case there is output data
+data_name: "caption_train.all.json" 
+eval_name: "caption_val.all.json" 
+test_name: "" 
+data_seed: null
+train_samples: null # could be list representing a chunk or an index set
+eval_samples: [0, 50]
+test_samples: [50, 100]
+batch_size: ${running.batch_size}
+crop_size: [0, 0, 256, 256] # top, left, height, width
+resize_size: 256 
+max_txt_len: 50 
+txt_vocab_name: caption_train.all.topk.dict 
+vis_vocab_name: vis_vocab_is_null 
+vis_vocab_size: ${..model.vq.vocab_size}
+txt_special_token: {bos: <TXT|BOS>, eos: <TXT|EOS>, mask: <MASK>, sep: <SEP>, unk: <UNK>, pad: <PAD>}
+vis_special_token: {}

@@ -1,0 +1,5 @@
+name: 'CoupleLMLossHead'
+layers: []
+scaling: True
+infer_mode: ${..decoder.infer_mode}
+vloss_beta: 7.

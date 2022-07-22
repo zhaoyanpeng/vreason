@@ -8,3 +8,6 @@ from .slotattn import *
 from .encoder import *
 from .decoder import *
 from .loss import *
+
+# helpful modules
+from .vq_wrapper import *

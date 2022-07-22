@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel
 
 from .raven_solver import Monitor as Meta
 from ..model import build_main_model
-from ..data import build_clevr_image_data, build_abscene_image_data
+from ..data import build_clevr_image_text_data
 
 from ..util import numel, shorten_name, ExpDecayLR, SlotattnLR
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
@@ -24,14 +24,20 @@ from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 class Monitor(Meta):
     def __init__(self, cfg, echo, device):
         super(Monitor, self).__init__(cfg, echo, device)
+        # save the k-best checkpoints
+        topk = cfg.running.topk_best
+        self.kbest_cache = [(-float("inf"), None)] * topk if topk > 1 else None 
 
     def show_batch(self, batch):
+        pass
+
+    def step(self, loss=None, **kwargs):
         pass
 
     def build_data(self):
         self.dataloader, self.evalloader, self.testloader, \
         self.encoder_vocab, self.decoder_vocab, self.cate_vocab = \
-        eval(f"build_{self.cfg.data.name.lower()}_image_data")(
+        eval(f"build_{self.cfg.data.name.lower()}_image_text_data")(
             self.cfg.data, not self.cfg.eval, self.echo
         )
 
@@ -40,10 +46,10 @@ class Monitor(Meta):
         image = torch.from_numpy(image).to(self.device)
         image = image.permute(0, 3, 1, 2)
 
-        mask = sample["mask"]
-        mask = torch.from_numpy(mask).to(self.device)
+        text = sample["text"]
+        text = torch.from_numpy(text).to(self.device)
 
-        return {"image": image, "mask": mask, "vfile": sample["vfile"]}
+        return {"image": image, "text": text, "vfile": sample["vfile"]}
 
     def epoch(self, iepoch):
         self.model.reset()
@@ -58,17 +64,21 @@ class Monitor(Meta):
             #self.show_batch(batch, meta)
 
             batch_dict = self.make_batch(batch) 
+            batch_dict["device_ids"] = device_ids
 
             self.optim_step += 1 
             bsize = batch_dict["image"].shape[0]
             force_eval, warmup = self.pre_step(step, warmup_step_rate)
 
             self.timeit(all_time, key="data")
+            
 
-            loss, _ = self.model(**batch_dict)
-            loss.backward()
-            if self.optim_step % self.cfg.running.optim_rate == 0: 
-                self.step()
+            with torch.cuda.amp.autocast():
+                loss, _ = self.model(**batch_dict)
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
 
             self.timeit(all_time, key="model")
 
@@ -136,13 +146,15 @@ class Monitor(Meta):
             #self.show_batch(batch)
 
             batch_dict = self.make_batch(batch)
+            batch_dict["infer"] = False 
+            batch_dict["analyze"] = True
+            batch_dict["device_ids"] = device_ids
+
             bsize = batch_dict["image"].shape[0]
 
-            batch_dict["infer"] = True
-            batch_dict["analyze"] = True
-
-            loss_mean, (ntoken, _) = self.model(**batch_dict)
-            loss = loss_mean * ntoken
+            with torch.cuda.amp.autocast():
+                loss_mean, (ntoken, _) = self.model(**batch_dict)
+            loss = loss_mean * 1 
 
             epoch_step += 1
             total_word += ntoken 
@@ -152,12 +164,13 @@ class Monitor(Meta):
             if self.cfg.rank == 0 and (ibatch + 1) % peep_rate == 0:
                 self.echo(
                     f"step {istep} / {ibatch}\t" + #gnorm {grad_norm():.2f} " +
-                    f"loss {losses / total_word:.8f} " # (istep + 0):.8f} " # (ibatch + 1):.8f} " +
+                    f"loss {losses / epoch_step:.8f} " # (istep + 0):.8f} " # (ibatch + 1):.8f} " +
                     f"{nsample / (time.time() - start_time):.2f} samples/s"
                 )
+        self.save_metric = -losses / epoch_step
 
         model = self.model.module if isinstance(self.model, DistributedDataParallel) else self.model
-        self.echo(f"# sample {nsample}; {nsample / (time.time() - start_time):.2f} samples/s")
+        self.echo(f"# sample {nsample}; metric {self.save_metric:.3f}; {nsample / (time.time() - start_time):.2f} samples/s")
         stats = model.stats()
         if stats != "": # could be empty
             self.echo(f"EVAL STATS: {model.stats()}")
