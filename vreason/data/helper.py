@@ -95,7 +95,7 @@ class Indexer:
             self.idx2word[idx] = word
 
     def idx(self, token):
-        return self.word2idx.get(token, self.word2idx[self.UNK])  
+        return self.word2idx.get(token, self.UNK_IDX) #self.word2idx[self.UNK])  
 
     def str(self, idx):
         return self.idx2word.get(idx, self.UNK)  

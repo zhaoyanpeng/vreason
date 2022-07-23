@@ -1,0 +1,10 @@
+name: DalleBartEncHead
+m_dim: 1024 
+f_dim: 2048 
+num_head: 16 
+num_layer: 6 
+t_dropout: 0.1
+stability: 0.1
+norm_first: True
+activation: gelu
+max_enc_len: ${..embedder.len_txt_seq} 

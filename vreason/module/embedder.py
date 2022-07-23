@@ -114,11 +114,27 @@ class SoftPositionalEncoder(nn.Module):
     def encode(self, x):
         return self.linear(self.grid)
 
-class Hard1DEmbedder(nn.Module):
-    def __init__(
-        self, num_token, embed_dim, resolution, tok_padding_idx=None, use_pos_padding=False
-    ):
+
+class MetaEmbedder(nn.Module):
+    def __init__(self, embed_dim, offset=0, **kwargs):
         super().__init__()
+        self.offset = offset # images may need an extra <BOS>
+        self.ext_embed = nn.Embedding(offset, embed_dim)
+
+    def offset_pos_embed(self, B, pos, device): 
+        if self.offset > 0:
+            ext = self.ext_embed(torch.arange(self.offset, device=device))
+            if ext.dim() != pos.dim(): # missing the batch dim
+                ext = ext.expand(B, -1, -1)
+            pos = torch.cat([ext, pos], dim=-2)
+        return pos
+
+class Hard1DEmbedder(MetaEmbedder):
+    def __init__(
+        self, num_token, embed_dim, resolution,
+        offset=0, tok_padding_idx=None, use_pos_padding=False,
+    ):
+        super().__init__(embed_dim, offset=offset)
         self.grid_size = self.build_grid(resolution)
         self.num_token = num_token # + self.grid_size
         self.tok_padding_idx = tok_padding_idx
@@ -135,7 +151,8 @@ class Hard1DEmbedder(nn.Module):
         return resolution
     
     def encode(self, x):
-        B, L = x.shape[:2]
+        B, N = x.shape[:2]
+        L = N - self.offset
         pos_indice = torch.arange(L, device=x.device)
         if self.pos_padding_idx is not None:
             pad_indice = torch.where(
@@ -144,7 +161,8 @@ class Hard1DEmbedder(nn.Module):
             pos = self.pos_embed(pad_indice)
         else:
             pos = self.pos_embed(pos_indice)
-        if self.tok_padding_idx is not None:
+        pos = self.offset_pos_embed(B, pos, x.device)
+        if self.tok_padding_idx is not None: # words and positions
             pad_indice = pos_indice + (self.num_token - self.grid_size)
             x = torch.where(x == self.tok_padding_idx, pad_indice, x)
         return self.tok_embed(x), pos 
@@ -153,11 +171,11 @@ class Hard1DEmbedder(nn.Module):
         tok, pos = self.encode(x)
         return tok + pos 
 
-class Hard2DEmbedder(nn.Module):
+class Hard2DEmbedder(MetaEmbedder):
     def __init__(
-        self, num_token, embed_dim, resolution, **kwargs 
+        self, num_token, embed_dim, resolution, offset=0, **kwargs 
     ):
-        super().__init__()
+        super().__init__(embed_dim, offset=offset)
         self.embed_dim = embed_dim
         grid_size = self.build_grid(resolution)
         self.tok_embed = nn.Embedding(num_token, embed_dim)
@@ -169,23 +187,25 @@ class Hard2DEmbedder(nn.Module):
         return resolution[:2]
 
     def encode(self, x):
-        B, L = x.shape[:2]
+        B, N = x.shape[:2]
+        L = N - self.offset
         H = W = int(L ** 0.5)
         pos_indice = torch.arange(H, device=x.device)
         col = self.col_embed(pos_indice).unsqueeze(1)
         row = self.row_embed(pos_indice).unsqueeze(0)
         pos = (row + col).reshape(-1, self.embed_dim)
+        pos = self.offset_pos_embed(B, pos, x.device)
         return self.tok_embed(x), pos 
 
     def forward(self, x):
         tok, pos = self.encode(x)
         return tok + pos 
 
-class Soft2DEmbedder(nn.Module):
+class Soft2DEmbedder(MetaEmbedder):
     def __init__(
-        self, num_token, embed_dim, resolution, bias=True, **kwargs
+        self, num_token, embed_dim, resolution, bias=True, offset=0, **kwargs
     ):
-        super().__init__()
+        super().__init__(embed_dim, offset=offset)
         self.embed_dim = embed_dim
         grid = self.build_grid(resolution)
         self.register_buffer("grid", grid)
@@ -203,7 +223,9 @@ class Soft2DEmbedder(nn.Module):
         return torch.from_numpy(grid) 
     
     def encode(self, x):
+        B, N = x.shape[:2]
         pos = self.pos_embed(self.grid).reshape(-1, self.embed_dim)
+        pos = self.offset_pos_embed(B, pos, x.device)
         return self.tok_embed(x), pos 
 
     def forward(self, x):

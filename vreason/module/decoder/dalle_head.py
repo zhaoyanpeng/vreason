@@ -112,3 +112,85 @@ class DalleGPTDecHead(MetaDecHead):
         v_seq = x_seq[:, -self.len_vis_seq:].contiguous()
 
         return (x_txt, x_vis), (t_seq, v_seq), None, {}
+
+@DECODER_HEADS_REGISTRY.register()
+class DalleBartDecHead(MetaDecHead):
+    def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
+        super().__init__(cfg, None)
+        self.encoder = None
+        if cfg.num_layer > 0:
+            layer_fn = TransformerDecoderLayer(
+                cfg.m_dim, cfg.num_head, cfg.f_dim, cfg.t_dropout, 
+                activation=cfg.activation, norm_first=cfg.norm_first
+            )
+            self.encoder = TransformerDecoder(layer_fn, cfg.num_layer)
+
+            self_attn_mask = (torch.triu(
+                torch.ones(cfg.block_size, cfg.block_size, dtype=torch.uint8), 
+            diagonal=1) == 1)
+            self.register_buffer("self_attn_mask", self_attn_mask) 
+
+        self.num_head = cfg.num_head
+
+        self.len_vis_seq = cfg.len_vis_seq
+        self.vis_token_vocab = vis_token_vocab
+        self.num_vis_token = len(vis_token_vocab)
+
+        self.ln_output = nn.LayerNorm(cfg.m_dim) if cfg.norm_first else nn.Identity()
+        self.predictor = nn.Linear(cfg.m_dim, self.num_vis_token)
+
+        self.stability = cfg.stability
+
+        self._reset_parameters()
+
+    def forward( 
+        self, 
+        t: Tensor,
+        v: Tensor,
+        t_seq: Tensor=None, 
+        v_seq: Tensor=None,
+        memory: Tensor=None,
+        memo_attn_mask: Tensor=None,
+        memo_key_padding_mask: Tensor=None,
+        infer: bool=False,
+        **kwargs,
+    ):
+        # `x' has been embedded into (B, L, H) by default while 
+        # `x_seq' is the original sequence of (B, L).
+        if memory is None: # may or may not have inter attention
+            memory = memo_attn_mask = memo_key_padding_mask = None 
+        if infer and not self.training:
+            return self.dispatch_inference(
+                x, x_seq = x_seq,
+                memory=memory,
+                memo_attn_mask=memo_attn_mask,
+                memo_key_padding_mask=memo_key_padding_mask,
+                **kwargs,
+            )
+
+        x = v 
+        x_seq = v_seq 
+
+        B, L = x.shape[:2]
+        self_attn_mask = self.self_attn_mask[:L - 1, :L - 1]
+        
+        x = x[:, :-1]
+        if self.stability > 0.:
+            x = x * self.stability + x.detach() * (1 - self.stability)
+
+        memory = memory.transpose(0, 1)
+
+        x = x.transpose(0, 1)
+        
+        x = self.encoder(
+            x, 
+            memory=memory, 
+            tgt_mask=self_attn_mask,
+            memory_key_padding_mask=memo_key_padding_mask,
+        ) 
+
+        x = x.transpose(0, 1)
+
+        x = self.ln_output(x)
+        x = self.predictor(x) 
+        return (x,), (x_seq,), None, {}

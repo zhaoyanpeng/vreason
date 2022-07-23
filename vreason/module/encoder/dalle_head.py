@@ -18,6 +18,7 @@ __all__ = ["DalleTokenEncHead"]
 class DalleTokenEncHead(MetaEncHead):
     def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
         super().__init__(cfg, None)
+        assert cfg.mode.lower() in {"gpt", "bart"}, f"GPT (gpt) or BART (bart) embed mode"
         self.mode = cfg.mode
 
         self._emb_size = cfg.embed_dim
@@ -37,6 +38,7 @@ class DalleTokenEncHead(MetaEncHead):
         )
         self.vis_embed = eval(cfg.vis_embed)(
             self.num_vis_token, self._emb_size, (H,) * 2,
+            offset=(1 if self.mode == "bart" else 0),
             tok_padding_idx=None, use_pos_padding=False,
         )
 
@@ -47,6 +49,10 @@ class DalleTokenEncHead(MetaEncHead):
     def emb_size(self):
         return self._emb_size
 
+    @property
+    def is_bart(self):
+        return self.mode == "bart" 
+
     def _encode_positions(self, t=None, v=None):
         if t is not None:
             t = self.txt_embed(t)
@@ -55,4 +61,50 @@ class DalleTokenEncHead(MetaEncHead):
         return t, v
 
     def forward(self, t_seq, v_seq=None, **kwargs):
-        return self._encode_positions(t=t_seq, v=v_seq)
+        v_seq = F.pad(
+            v_seq, (1, 0), value=self.vis_token_vocab.BOS_IDX
+        ) if self.is_bart else v_seq
+        t, v = self._encode_positions(t=t_seq, v=v_seq) 
+        return t, v, {} 
+
+@ENCODER_HEADS_REGISTRY.register()
+class DalleBartEncHead(MetaEncHead):
+    """ Standard Transformer Encoder.
+    """
+    def __init__(self, cfg, token_vocab, **kwargs):
+        super().__init__(cfg, token_vocab)
+        self.encoder = None
+        if cfg.num_layer > 0:
+            layer_fn = TransformerEncoderLayer(
+                cfg.m_dim, cfg.num_head, cfg.f_dim, cfg.t_dropout, 
+                activation=cfg.activation, norm_first=cfg.norm_first
+            )
+            self.encoder = TransformerEncoder(layer_fn, cfg.num_layer)
+
+        self.stability = cfg.stability
+
+        self._reset_parameters()
+
+    def forward(
+        self, 
+        x: Tensor, *args,
+        self_attn_mask: Tensor=None,
+        self_key_padding_mask: Tensor=None,
+        attn_weight_type: str=None,
+        **kwargs
+    ):
+        if self.encoder is None:
+            return x, None, None
+
+        if self.stability > 0.:
+            x = x * self.stability + x.detach() * (1 - self.stability)
+        
+        x = x.transpose(0, 1)
+
+        x = self.encoder(
+            x, src_key_padding_mask=self_key_padding_mask,
+        ) 
+
+        x = x.transpose(0, 1)
+
+        return x, None, None, {} 

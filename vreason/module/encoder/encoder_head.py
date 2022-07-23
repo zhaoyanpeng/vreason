@@ -48,7 +48,7 @@ class DummyEncHead(MetaEncHead):
 class TokenEncHead(MetaEncHead):
     def __init__(self, cfg, token_vocab, emb_size=None, **kwargs):
         super().__init__(cfg, token_vocab)
-        assert cfg.mode in {"gpt", "enc_dec"}, f"GPT (gpt) or Encoder-Decoder (enc_dec) mode"
+        assert cfg.mode in {"gpt", "seq2seq"}, f"GPT (gpt) or Encoder-Decoder (seq2seq) mode"
         self.mode = cfg.mode
 
         # contains only special tokens e.g.,
@@ -162,7 +162,7 @@ class TokenEncHead(MetaEncHead):
 class NeoTokenEncHead(MetaEncHead):
     def __init__(self, cfg, token_vocab, emb_size=None, fixed_weight=None, **kwargs):
         super().__init__(cfg, token_vocab)
-        assert cfg.mode in {"gpt", "enc_dec"}, f"GPT (gpt) or Encoder-Decoder (enc_dec) mode"
+        assert cfg.mode in {"gpt", "seq2seq"}, f"GPT (gpt) or Encoder-Decoder (seq2seq) mode"
         self.mode = cfg.mode
 
         # fixed weight followed by special tokens e.g.,
@@ -274,7 +274,7 @@ class NeoTokenEncHead(MetaEncHead):
         if self.mode == "gpt":
             tgt_seq = torch.cat([ctx_seq, target_seq], dim=1)
             tgt_emb = torch.cat([ctx_emb, target_emb], dim=1)
-        elif self.mode == "enc_dec":
+        elif self.mode == "seq2seq":
             tgt_seq = target_seq
             tgt_emb = target_emb
 

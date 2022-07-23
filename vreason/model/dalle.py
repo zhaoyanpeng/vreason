@@ -19,26 +19,29 @@ class Dalle(MetaSolver):
     def tokenize_images(self, v):
         return self.vq.encode(v)
 
-    def forward(self, text=None, image=None, analyze=False, device_ids=[0], **kwargs):
+    def forward(self, text=None, image=None, text_mask=None, analyze=False, device_ids=[0], **kwargs):
         if len(device_ids) > 1:
             return self.forward_dp(
-                text=text, image=image, analyze=analyze, device_ids=device_ids, **kwargs
+                text=text, image=image, text_mask=text_mask, analyze=analyze, device_ids=device_ids, **kwargs
             )
         # a shared embedder (b/w encoder and decoder) to mimic GPT 
         # with bi-directional memory or an encoder-only GPT model.
         v_seq = self.tokenize_images(image) # discretize images 
-        t_emb, v_emb = self.embedder_head(text, v_seq=v_seq)
+        t_emb, v_emb, emb_extra = self.embedder_head(text, v_seq=v_seq)
+        
         memory, _, _, enc_extra = self.encoder_head(
-            t_emb, v_emb, t_seq=text, v_seq=v_seq
+            t_emb, v_emb, t_seq=text, v_seq=v_seq,
+            self_key_padding_mask=text_mask, **kwargs
         )
         
         logits, targets, _, dec_extra = self.decoder_head(
-            t_emb, v_emb, t_seq=text, v_seq=v_seq, memory=memory, **kwargs
+            t_emb, v_emb, t_seq=text, v_seq=v_seq,
+            memo_key_padding_mask=text_mask,  memory=memory, **kwargs
         )
-
+        
         _, outs = self.loss_head(logits, targets)
         loss = self.set_stats(dec_extra, outs[-1])
-        
+
         if analyze:
             self.analyze(
                 t_emb=t_emb, v_emb=v_emb, t_seq=text, v_seq=v_seq,
@@ -46,14 +49,18 @@ class Dalle(MetaSolver):
             )
         return loss, outs 
 
-    def forward_dp(self, text=None, image=None, analyze=False, device_ids=[0], **kwargs):
+    def forward_dp(self, text=None, image=None, text_mask=None, analyze=False, device_ids=[0], **kwargs):
         v_seq = data_parallel(
             self.vq, image, device_ids=device_ids
         )
 
-        t_emb, v_emb = self.embedder_head(text, v_seq=v_seq)
+        t_emb, v_emb, emb_extra = self.embedder_head(text, v_seq=v_seq)
 
-        kwargs.update({"t_seq": text, "v_seq": v_seq})
+        kwargs.update({
+            "t_seq": text, "v_seq": v_seq,
+            "self_key_padding_mask": text_mask,
+            "memo_key_padding_mask": text_mask
+        })
         memory, _, _, enc_extra = data_parallel(
             self.encoder_head, (t_emb, v_emb), device_ids=device_ids, module_kwargs=kwargs
         )
@@ -76,26 +83,36 @@ class Dalle(MetaSolver):
     def stats(self): 
         meter = self.meter_train if self.training else self.meter_infer
         stats = meter.stats
+        
+        if not self.embedder_head.is_bart:
+            nstep = stats["nstep"]
+            alpha = 1 / nstep if nstep > 0 else 0
+            t_loss = stats["t_main_loss"] * alpha 
+            v_loss = stats["v_main_loss"] * alpha 
+            info = f"t_loss {t_loss:.5f} v_loss {v_loss:.5f} "
 
-        nstep = stats["nstep"]
-        alpha = 1 / nstep if nstep > 0 else 0
-        t_loss = stats["t_main_loss"] * alpha 
-        v_loss = stats["v_main_loss"] * alpha 
-        info = f"t_loss {t_loss:.5f} v_loss {v_loss:.5f} "
+            t_ntoken = stats["t_ntoken"]
+            alpha = 1 / t_ntoken * 100 if t_ntoken > 0 else 0
+            t_acc = stats["t_ntrue"] * alpha
 
-        t_ntoken = stats["t_ntoken"]
-        alpha = 1 / t_ntoken * 100 if t_ntoken > 0 else 0
-        t_acc = stats["t_ntrue"] * alpha
+            v_ntoken = stats["v_ntoken"]
+            alpha = 1 / v_ntoken * 100 if v_ntoken > 0 else 0
+            v_acc = stats["v_ntrue"] * alpha
 
-        v_ntoken = stats["v_ntoken"]
-        alpha = 1 / v_ntoken * 100 if v_ntoken > 0 else 0
-        v_acc = stats["v_ntrue"] * alpha
+            ntoken = stats["ntoken"]
+            alpha = 1 / ntoken if ntoken > 0 else 0
+            acc = stats["ntrue"] * alpha
 
-        ntoken = stats["ntoken"]
-        alpha = 1 / ntoken if ntoken > 0 else 0
-        acc = stats["ntrue"] * alpha
+            info += f"t_acc {t_acc:.3f} v_acc {v_acc:.3f} acc {acc:.3f}"
+        else:
+            nstep = stats["nstep"]
+            alpha = 1 / nstep if nstep > 0 else 0
+            loss = stats["main_loss"] * alpha 
 
-        info += f"t_acc {t_acc:.3f} v_acc {v_acc:.3f} acc {acc:.3f}"
+            ntoken = stats["ntoken"]
+            alpha = 1 / ntoken * 100 if ntoken > 0 else 0
+            acc = stats["ntrue"] * alpha
+            info = f"loss {loss:.5f} acc {acc:.3f}"
 
         nsample = stats["nsample"]
         info = f"{info} ({nsample})"

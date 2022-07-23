@@ -128,16 +128,17 @@ def build_clevr_image_text_data(cfg, train, echo):
     try:
         vis_vocab_file = f"{cfg.data_root}/{cfg.vis_vocab_name}"
         register_indexer(
-            cfg.vis_vocab_name, vis_vocab_file, add_special=False
+            cfg.vis_vocab_name, vis_vocab_file, add_special=(len(cfg.vis_special_token) > 0),
+            specials=cfg.vis_special_token, front_special=False
         )
         decoder_vocab = DatasetCatalog.get(cfg.vis_vocab_name) 
     except Exception as e:
         echo(f"Catched Err: {e}")
         word_list = [f"{i}" for i in range(cfg.vis_vocab_size)]
         register_indexer(
-            cfg.vis_vocab_name, None, override=True,
-            extra_keys=word_list, add_special=False
-        )
+            cfg.vis_vocab_name, None, add_special=(len(cfg.vis_special_token) > 0), override=True,
+            extra_keys=word_list, specials=cfg.vis_special_token, front_special=False
+        ) # may want to append a <BOS> w/o changing image token indice
         decoder_vocab = DatasetCatalog.get(cfg.vis_vocab_name) 
 
     extra_keys = [f"pad{i:03}" for i in range(cfg.max_txt_len)]

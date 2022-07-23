@@ -227,11 +227,7 @@ class CoupleLMLossHead(MetaLossHead):
         extra = {f"{flag}ntoken": ntoken, f"{flag}main_loss": loss, f"{flag}nsample": nsample, f"{flag}ntrue": ntrue}
         return loss, (ntoken, extra)
 
-    def forward(self, x1, x2, *args, **kwargs):
-        assert isinstance(x1, (list, tuple))
-        assert isinstance(x2, (list, tuple))
-        assert len(x1) == len(x2), f"x1 and x2 have different numbers of items"
-        
+    def couple_forward(self, x1, x2, *args, **kwargs):
         t_loss, (t_ntoken, t_extra) = self.main_forward(x1[0], x2[0], flag="t_")
         v_loss, (v_ntoken, v_extra) = self.main_forward(x1[1], x2[1], flag="v_")
 
@@ -244,3 +240,17 @@ class CoupleLMLossHead(MetaLossHead):
         extra.update(t_extra)
         extra.update(v_extra)
         return loss, (ntoken, extra) 
+
+    def single_forward(self, x1, x2, *args, **kwargs):
+        loss, (ntoken, extra) = self.main_forward(x1[0], x2[0], flag="")
+        extra["nstep"] = 1
+        return loss, (ntoken, extra) 
+
+    def forward(self, x1, x2, *args, **kwargs):
+        assert isinstance(x1, (list, tuple)) and isinstance(x2, (list, tuple)), f"except tuple/list"
+        if len(x1) > 1:
+            assert len(x1) == len(x2), f"x1 and x2 have different numbers of items"
+            return self.couple_forward(x1, x2, *args, **kwargs)
+        else:
+            return self.single_forward(x1, x2, *args, **kwargs)
+            

@@ -19,5 +19,5 @@ num_txt_sample: 1 # max len of a caption is 50, change this should also change `
 txt_vocab_name: caption_train.all.topk.dict
 vis_vocab_name: vis_vocab_is_null
 vis_vocab_size: ${..model.vq.vocab_size}
-txt_special_token: {bos: <TXT|BOS>, eos: <TXT|EOS>, mask: <MASK>, sep: <SEP>, unk: <UNK>, pad: <PAD>}
+txt_special_token: {}
 vis_special_token: {}

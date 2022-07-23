@@ -1,7 +1,7 @@
 name: DalleTokenEncHead
+mode: gpt 
 embed_dim: 1024 
 txt_embed: Hard1DEmbedder
 vis_embed: Hard1DEmbedder
 len_txt_seq: ${data.max_txt_len} 
 len_vis_seq: ${..vq.max_vis_len} 
-mode: gpt 

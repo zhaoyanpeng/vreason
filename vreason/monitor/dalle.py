@@ -48,8 +48,10 @@ class Monitor(Meta):
 
         text = sample["text"]
         text = torch.from_numpy(text).to(self.device)
+        
+        text_mask = text == self.encoder_vocab.PAD_IDX
 
-        return {"image": image, "text": text, "vfile": sample["vfile"]}
+        return {"image": image, "text": text, "text_mask": text_mask, "vfile": sample["vfile"]}
 
     def epoch(self, iepoch):
         self.model.reset()
