@@ -133,7 +133,7 @@ def build_clevr_image_text_data(cfg, train, echo):
         )
         decoder_vocab = DatasetCatalog.get(cfg.vis_vocab_name) 
     except Exception as e:
-        echo(f"Catched Err: {e}")
+        echo(f"Err: {e}")
         word_list = [f"{i}" for i in range(cfg.vis_vocab_size)]
         register_indexer(
             cfg.vis_vocab_name, None, add_special=(len(cfg.vis_special_token) > 0), override=True,
@@ -151,7 +151,7 @@ def build_clevr_image_text_data(cfg, train, echo):
         )
         encoder_vocab = DatasetCatalog.get(cfg.txt_vocab_name) 
     except Exception as e:
-        echo(f"Catched Err: {e}")
+        echo(f"Err: {e}")
         register_indexer(
             cfg.txt_vocab_name, None, override=True,
             extra_keys=extra_keys, specials=cfg.txt_special_token, front_special=True

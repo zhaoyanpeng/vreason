@@ -5,10 +5,10 @@ num_head: 16
 num_layer: 12 
 t_dropout: 0.1
 stability: 0.1
-max_dec_len: 101
-beg_dec_len: 0
 len_txt_seq: ${..embedder.len_txt_seq} 
 len_vis_seq: ${..embedder.len_vis_seq} 
+max_dec_len: ${.len_vis_seq}
+beg_dec_len: 0
 block_size: ${sum:1,${.len_vis_seq}}
 contx_size: ${.block_size}
 norm_first: True

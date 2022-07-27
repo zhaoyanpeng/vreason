@@ -18,7 +18,7 @@ from .raven_solver import Monitor as Meta
 from ..model import build_main_model
 from ..data import build_clevr_image_text_data
 
-from ..util import numel, shorten_name, ExpDecayLR, SlotattnLR
+from ..util import numel, shorten_name, save_image_local, ExpDecayLR, SlotattnLR
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 
 class Monitor(Meta):
@@ -122,6 +122,20 @@ class Monitor(Meta):
         report = self.main_eval(dataloader, samples=samples, iepoch=iepoch)
         #self.echo(f"TEST {report}")
         return ""
+
+    def save_images(self, images, vfiles, sampled_images):
+        if sampled_images is None:
+            return
+        images = (
+            (images.detach().cpu().clamp(-1, 1) + 1.) / 2 * 255.
+        ).permute(0, 2, 3, 1).numpy().astype(np.uint8)
+        all_images = np.concatenate(
+            (images[..., None], sampled_images), axis=-1
+        )
+        # TODO try ... except ...
+        fnames = [fname.rsplit("/", 1)[1].rsplit(".", 1)[0] for fname in vfiles]
+        root = f"{self.cfg.alias_root}/{self.cfg.alias_name}/sample"
+        save_image_local(root, fnames, all_images)
         
     def main_eval(self, dataloader, samples=float("inf"), iepoch=0):
 
@@ -148,15 +162,21 @@ class Monitor(Meta):
             #self.show_batch(batch)
 
             batch_dict = self.make_batch(batch)
-            batch_dict["infer"] = False 
+            batch_dict["infer"] = self.cfg.running.infer_mode 
+            batch_dict["debug"] = False 
             batch_dict["analyze"] = True
+            batch_dict["nsampling"] = self.cfg.running.nsampling 
             batch_dict["device_ids"] = device_ids
 
             bsize = batch_dict["image"].shape[0]
 
             with torch.cuda.amp.autocast():
-                loss_mean, (ntoken, _) = self.model(**batch_dict)
+                loss_mean, (ntoken, ret_dict) = self.model(**batch_dict)
             loss = loss_mean * 1 
+            
+            self.save_images( # let us log some images
+                batch_dict["image"], batch_dict["vfile"], ret_dict.pop("image", None)
+            )
 
             epoch_step += 1
             total_word += ntoken 
@@ -169,9 +189,9 @@ class Monitor(Meta):
                     f"loss {losses / epoch_step:.8f} " # (istep + 0):.8f} " # (ibatch + 1):.8f} " +
                     f"{nsample / (time.time() - start_time):.2f} samples/s"
                 )
-        self.save_metric = -losses / epoch_step
 
         model = self.model.module if isinstance(self.model, DistributedDataParallel) else self.model
+        self.save_metric = model.eval_metric() #-losses / epoch_step
         self.echo(f"# sample {nsample}; metric {self.save_metric:.3f}; {nsample / (time.time() - start_time):.2f} samples/s")
         stats = model.stats()
         if stats != "": # could be empty

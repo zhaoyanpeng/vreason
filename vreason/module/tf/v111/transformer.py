@@ -3,15 +3,26 @@ from typing import Optional, Any, Union, Callable
 
 import torch
 from torch import Tensor
-from .. import functional as F
-from .module import Module
-from .activation import MultiheadAttention
-from .container import ModuleList
-from ..init import xavier_uniform_
-from .dropout import Dropout
-from .linear import Linear
-from .normalization import LayerNorm
+from torch.nn import functional as F
+from torch.nn.modules.module import Module
+from torch.nn.modules.container import ModuleList
+from torch.nn.init import xavier_uniform_
+from torch.nn.modules.dropout import Dropout
+from torch.nn.modules.linear import Linear
+from torch.nn.modules.normalization import LayerNorm
 
+if True:
+    from .activation import MultiheadAttention
+else:
+    from torch.nn.modules.activation import MultiheadAttention
+
+__all__ = [
+    "Transformer", 
+    "TransformerEncoder", 
+    "TransformerDecoder", 
+    "TransformerEncoderLayer",
+    "TransformerDecoderLayer"
+]
 
 class Transformer(Module):
     r"""A transformer model. User is able to modify the attributes as needed. The architecture
@@ -185,7 +196,8 @@ class TransformerEncoder(Module):
         self.num_layers = num_layers
         self.norm = norm
 
-    def forward(self, src: Tensor, mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+    def forward(self, src: Tensor, mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None,
+        caches=None, use_cache=False) -> Tensor:
         r"""Pass the input through the encoder layers in turn.
 
         Args:
@@ -196,15 +208,20 @@ class TransformerEncoder(Module):
         Shape:
             see the docs in Transformer class.
         """
+        caches = {} if caches is None else caches 
         output = src
-
-        for mod in self.layers:
-            output = mod(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
+        
+        for i, mod in enumerate(self.layers):
+            cache = caches.get(i, None)
+            output, cache = mod(
+                output, src_mask=mask, src_key_padding_mask=src_key_padding_mask, cache=cache, use_cache=use_cache
+            )
+            caches[i] = cache
 
         if self.norm is not None:
             output = self.norm(output)
 
-        return output
+        return output, caches
 
 
 class TransformerDecoder(Module):
@@ -232,7 +249,7 @@ class TransformerDecoder(Module):
 
     def forward(self, tgt: Tensor, memory: Tensor, tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None, tgt_key_padding_mask: Optional[Tensor] = None,
-                memory_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+                memory_key_padding_mask: Optional[Tensor] = None, caches=None, use_cache=False) -> Tensor:
         r"""Pass the inputs (and mask) through the decoder layer in turn.
 
         Args:
@@ -246,18 +263,21 @@ class TransformerDecoder(Module):
         Shape:
             see the docs in Transformer class.
         """
+        caches = {} if caches is None else caches 
         output = tgt
 
-        for mod in self.layers:
-            output = mod(output, memory, tgt_mask=tgt_mask,
+        for i, mod in enumerate(self.layers):
+            cache = caches.get(i, None)
+            output, cache = mod(output, memory, tgt_mask=tgt_mask,
                          memory_mask=memory_mask,
                          tgt_key_padding_mask=tgt_key_padding_mask,
-                         memory_key_padding_mask=memory_key_padding_mask)
+                         memory_key_padding_mask=memory_key_padding_mask, cache=cache, use_cache=use_cache)
+            caches[i] = cache
 
         if self.norm is not None:
             output = self.norm(output)
 
-        return output
+        return output, caches
 
 class TransformerEncoderLayer(Module):
     r"""TransformerEncoderLayer is made up of self-attn and feedforward network.
@@ -322,7 +342,8 @@ class TransformerEncoderLayer(Module):
             state['activation'] = F.relu
         super(TransformerEncoderLayer, self).__setstate__(state)
 
-    def forward(self, src: Tensor, src_mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+    def forward(self, src: Tensor, src_mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None,
+        cache=None, use_cache=False) -> Tensor:
         r"""Pass the input through the encoder layer.
 
         Args:
@@ -336,29 +357,56 @@ class TransformerEncoderLayer(Module):
 
         # see Fig. 1 of https://arxiv.org/pdf/2002.04745v1.pdf
 
+        sa_cache = ff_cache = None
+        if cache is not None and use_cache:
+            assert not self.self_attn.batch_first, (
+                f"for simplicity's sake batch_first should be disabled when using cache"
+            )
+            sa_cache = cache[:3] if cache[0] is not None else None
+            ff_cache = cache[-1]
+
         x = src
         if self.norm_first:
-            x = x + self._sa_block(self.norm1(x), src_mask, src_key_padding_mask)
-            x = x + self._ff_block(self.norm2(x))
+            x_sa, sa_cache = self._sa_block(self.norm1(x), src_mask, src_key_padding_mask, cache=sa_cache, use_cache=use_cache)
+            x = x + x_sa 
+            x_ff, ff_cache = self._ff_block(self.norm2(x), cache=ff_cache, use_cache=use_cache)
+            x = x + x_ff 
         else:
-            x = self.norm1(x + self._sa_block(x, src_mask, src_key_padding_mask))
-            x = self.norm2(x + self._ff_block(x))
-
-        return x
+            x_sa, sa_cache = self._sa_block(x, src_mask, src_key_padding_mask, cache=sa_cache, use_cache=use_cache)
+            x = self.norm1(x + x_sa)
+            x_ff, ff_cache = self._ff_block(x, cache=ff_cache, use_cache=use_cache)
+            x = self.norm2(x + x_ff)
+        
+        cache = sa_cache + ff_cache # tuples
+        return x, cache
 
     # self-attention block
     def _sa_block(self, x: Tensor,
-                  attn_mask: Optional[Tensor], key_padding_mask: Optional[Tensor]) -> Tensor:
-        x = self.self_attn(x, x, x,
+                  attn_mask: Optional[Tensor], key_padding_mask: Optional[Tensor], cache=None, use_cache=False) -> Tensor:
+        if cache is not None and use_cache:
+            k = x.shape[0] - cache[0].shape[0]
+            x = x[-k:]
+
+        x, (_, sa_cache) = self.self_attn(x, x, x,
                            attn_mask=attn_mask,
                            key_padding_mask=key_padding_mask,
-                           need_weights=False)[0]
-        return self.dropout1(x)
+                           need_weights=False, cache=cache, use_cache=use_cache)
+        return self.dropout1(x), sa_cache
 
     # feed forward block
-    def _ff_block(self, x: Tensor) -> Tensor:
+    def _ff_block(self, x: Tensor, cache=None, use_cache=False) -> Tensor:
+        if cache is not None and use_cache:
+            k = x.shape[0] - cache.shape[0]
+            x = x[-k:]
+        
         x = self.linear2(self.dropout(self.activation(self.linear1(x))))
-        return self.dropout2(x)
+        x = self.dropout2(x)
+        
+        if cache is not None and use_cache:
+            x = torch.cat((cache, x), dim=0)
+
+        ff_cache = (x,) if use_cache else (None,) 
+        return x, ff_cache 
 
 
 class TransformerDecoderLayer(Module):
@@ -432,7 +480,8 @@ class TransformerDecoderLayer(Module):
         super(TransformerDecoderLayer, self).__setstate__(state)
 
     def forward(self, tgt: Tensor, memory: Tensor, tgt_mask: Optional[Tensor] = None, memory_mask: Optional[Tensor] = None,
-                tgt_key_padding_mask: Optional[Tensor] = None, memory_key_padding_mask: Optional[Tensor] = None) -> Tensor:
+                tgt_key_padding_mask: Optional[Tensor] = None, memory_key_padding_mask: Optional[Tensor] = None,
+                cache=None, use_cache=False) -> Tensor:
         r"""Pass the inputs (and mask) through the decoder layer.
 
         Args:
@@ -448,40 +497,79 @@ class TransformerDecoderLayer(Module):
         """
         # see Fig. 1 of https://arxiv.org/pdf/2002.04745v1.pdf
 
+        sa_cache = ma_cache = ff_cache = None
+        if cache is not None and use_cache:
+            assert not self.self_attn.batch_first, (
+                f"for simplicity's sake batch_first should be disabled when using cache"
+            )
+            sa_cache = cache[:3] if cache[0] is not None else None
+            ma_cache = cache[3 : 6] if cache[3] is not None else None
+            ff_cache = cache[-1]
+
         x = tgt
         if self.norm_first:
-            x = x + self._sa_block(self.norm1(x), tgt_mask, tgt_key_padding_mask)
-            x = x + self._mha_block(self.norm2(x), memory, memory_mask, memory_key_padding_mask)
-            x = x + self._ff_block(self.norm3(x))
+            x_sa, sa_cache, k = self._sa_block(self.norm1(x), tgt_mask, tgt_key_padding_mask, cache=sa_cache, use_cache=use_cache) 
+            x = x + x_sa 
+            x_ma, ma_cache = self._mha_block(
+                self.norm2(x), memory, memory_mask, memory_key_padding_mask, cache=ma_cache, use_cache=use_cache, k=k
+            )
+            x = x + x_ma 
+            x_ff, ff_cache = self._ff_block(self.norm3(x), cache=ff_cache, use_cache=use_cache)
+            x = x + x_ff 
         else:
-            x = self.norm1(x + self._sa_block(x, tgt_mask, tgt_key_padding_mask))
-            x = self.norm2(x + self._mha_block(x, memory, memory_mask, memory_key_padding_mask))
-            x = self.norm3(x + self._ff_block(x))
+            x_sa, sa_cache, k = self._sa_block(x, tgt_mask, tgt_key_padding_mask, cache=sa_cache, use_cache=use_cache)
+            x = self.norm1(x + x_sa)
+            x_ma, ma_cache = self._mha_block(
+                x, memory, memory_mask, memory_key_padding_mask, cache=ma_cache, use_cache=use_cache, k=k
+            )
+            x = self.norm2(x + x_ma)
+            x_ff, ff_cache = self._ff_block(x, cache=ff_cache, use_cache=use_cache)
+            x = self.norm3(x + x_ff)
 
-        return x
+        cache = sa_cache + ma_cache + ff_cache # tuples
+        return x, cache
 
     # self-attention block
     def _sa_block(self, x: Tensor,
-                  attn_mask: Optional[Tensor], key_padding_mask: Optional[Tensor]) -> Tensor:
-        x = self.self_attn(x, x, x,
+                  attn_mask: Optional[Tensor], key_padding_mask: Optional[Tensor], cache=None, use_cache=False) -> Tensor:
+        k = 1 
+        if cache is not None and use_cache:
+            k = x.shape[0] - cache[0].shape[0]
+            x = x[-k:]
+
+        x, (_, sa_cache) = self.self_attn(x, x, x,
                            attn_mask=attn_mask,
                            key_padding_mask=key_padding_mask,
-                           need_weights=False)[0]
-        return self.dropout1(x)
+                           need_weights=False, cache=cache, use_cache=use_cache)
+        return self.dropout1(x), sa_cache, k
 
     # multihead attention block
     def _mha_block(self, x: Tensor, mem: Tensor,
-                   attn_mask: Optional[Tensor], key_padding_mask: Optional[Tensor]) -> Tensor:
-        x = self.multihead_attn(x, mem, mem,
+                   attn_mask: Optional[Tensor], key_padding_mask: Optional[Tensor], cache=None, use_cache=False, k=1) -> Tensor:
+        if cache is not None and use_cache:
+            mem = mem[:0] # will be extracted from cache
+            x = x[-k:]    # cannot infer step size inside mha 
+
+        x, (_, ma_cache) = self.multihead_attn(x, mem, mem,
                                 attn_mask=attn_mask,
                                 key_padding_mask=key_padding_mask,
-                                need_weights=False)[0]
-        return self.dropout2(x)
+                                need_weights=False, cache=cache, use_cache=use_cache)
+        return self.dropout2(x), ma_cache
 
     # feed forward block
-    def _ff_block(self, x: Tensor) -> Tensor:
+    def _ff_block(self, x: Tensor, cache=None, use_cache=False) -> Tensor:
+        if cache is not None and use_cache:
+            k = x.shape[0] - cache.shape[0]
+            x = x[-k:]
+
         x = self.linear2(self.dropout(self.activation(self.linear1(x))))
-        return self.dropout3(x)
+        x = self.dropout3(x)
+        
+        if cache is not None and use_cache:
+            x = torch.cat((cache, x), dim=0)
+
+        ff_cache = (x,) if use_cache else (None,) 
+        return x, ff_cache 
 
 
 def _get_clones(module, N):

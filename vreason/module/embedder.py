@@ -195,6 +195,7 @@ class Hard2DEmbedder(MetaEmbedder):
         row = self.row_embed(pos_indice).unsqueeze(0)
         pos = (row + col).reshape(-1, self.embed_dim)
         pos = self.offset_pos_embed(B, pos, x.device)
+        pos = pos[:N]
         return self.tok_embed(x), pos 
 
     def forward(self, x):
@@ -226,6 +227,7 @@ class Soft2DEmbedder(MetaEmbedder):
         B, N = x.shape[:2]
         pos = self.pos_embed(self.grid).reshape(-1, self.embed_dim)
         pos = self.offset_pos_embed(B, pos, x.device)
+        pos = pos[:N]
         return self.tok_embed(x), pos 
 
     def forward(self, x):

@@ -4,12 +4,16 @@ import torch
 from typing import Tuple
 from torch import nn, Tensor
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 import torch.nn.functional as F
 
 from . import MetaEncHead, ENCODER_HEADS_REGISTRY
 from .. import _get_activation_fn, Hard1DEmbedder, Hard2DEmbedder, Soft2DEmbedder
+
+if True: 
+    from .. import TransformerEncoder, TransformerEncoderLayer
+else:
+    from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 __all__ = ["DalleTokenEncHead"]
 
@@ -57,13 +61,11 @@ class DalleTokenEncHead(MetaEncHead):
         if t is not None:
             t = self.txt_embed(t)
         if v is not None:
+            v = F.pad(v, (1, 0), value=self.vis_token_vocab.BOS_IDX) if self.is_bart else v
             v = self.vis_embed(v)
         return t, v
 
     def forward(self, t_seq, v_seq=None, **kwargs):
-        v_seq = F.pad(
-            v_seq, (1, 0), value=self.vis_token_vocab.BOS_IDX
-        ) if self.is_bart else v_seq
         t, v = self._encode_positions(t=t_seq, v=v_seq) 
         return t, v, {} 
 
@@ -91,10 +93,15 @@ class DalleBartEncHead(MetaEncHead):
         self_attn_mask: Tensor=None,
         self_key_padding_mask: Tensor=None,
         attn_weight_type: str=None,
+        use_cache: bool=False,
+        cache: Tensor=None,
         **kwargs
     ):
+        if cache is not None and use_cache:
+            return cache, None, cache, {}
+
         if self.encoder is None:
-            return x, None, None
+            return x, None, None, {}
 
         if self.stability > 0.:
             x = x * self.stability + x.detach() * (1 - self.stability)
@@ -104,7 +111,11 @@ class DalleBartEncHead(MetaEncHead):
         x = self.encoder(
             x, src_key_padding_mask=self_key_padding_mask,
         ) 
+        if isinstance(x, (tuple, list)):
+            x, *_ = x
 
         x = x.transpose(0, 1)
 
-        return x, None, None, {} 
+        cache = x if use_cache else None
+
+        return x, None, cache, {} 

@@ -1,5 +1,6 @@
 import numpy as np
 import os, sys, re, time
+import warnings
 import torch
 from typing import Tuple
 from torch import nn, Tensor
@@ -31,10 +32,12 @@ def load_vqgan(config, ckpt_path=None, gumbel=False):
         model = GumbelVQ(**config.model.params)
     else:
         model = VQModel(**config.model.params)
-    if ckpt_path is not None:
+    try:
         sd = torch.load(ckpt_path, map_location="cpu")["state_dict"]
         missing, unexpected = model.load_state_dict(sd, strict=True) #False)
         print(f"loaded from {ckpt_path}")
+    except Exception as e:
+        warnings.warn(f"Err: {e}", UserWarning)
     return model.eval()
 
 def from_pretrained_vqgan(cfg, restore=True):

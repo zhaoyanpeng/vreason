@@ -64,7 +64,7 @@ class MetaSolver(nn.Module):
     def set_stats(self, dec_extra, loss_dict):
         meter = self.meter_train if self.training else self.meter_infer
         meter(**loss_dict)
-        loss = sum([v for k, v in loss_dict.items() if k.endswith("_loss")])
+        #loss = sum([v for k, v in loss_dict.items() if k.endswith("_loss")])
         loss = loss_dict["main_loss"]
         return loss
 
@@ -75,6 +75,9 @@ class MetaSolver(nn.Module):
         success = stats["ntrue"] / nsample if nsample > 0 else 0.
         info = f"acc {success * 100:7.3f} ({nsample})"
         return info
+
+    def eval_metric(self):
+        raise NotImplemented
 
     def reset(self):
         meter = self.meter_train if self.training else self.meter_infer
@@ -93,6 +96,9 @@ class MetaSolver(nn.Module):
         return self
 
     def tokenize_images(self, v):
+        raise NotImplemented
+
+    def generate_images(self, v):
         raise NotImplemented
 
     def collect_state_dict(self):

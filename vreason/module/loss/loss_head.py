@@ -204,12 +204,20 @@ class CoupleLMLossHead(MetaLossHead):
         loss_sum = losses.sum() 
         ntoken = (x2 != self.ignore_index).sum()
         loss = (loss_sum / ntoken) if ntoken > 0 else loss_sum
-        return loss, (ntoken, losses)
+        return loss, (ntoken.cpu().item(), losses)
+
+    def _estimate_ppl(self, x):
+        x = x.detach().clone()
+        indice = torch.where(x)
+        x[indice] = x[indice].exp()
+        cnt = torch.unique(indice[0], return_counts=True)[1].clamp(min=1)
+        ppl = x.sum(1) / cnt
+        return ppl
 
     def infer(self, x1, x2, *args, **kwargs): 
         results = self._estimate_loss(x1, x2)
-        return results 
-
+        return results
+    
     def predict(self, x1, x2):
         pred = x1.reshape(-1, x1.shape[-1]).argmax(-1)
         mask = x2 != self.ignore_index
@@ -220,31 +228,40 @@ class CoupleLMLossHead(MetaLossHead):
         nsample, ntrue = self.predict(x1, x2)
         if not self.training:
             loss, (ntoken, losses) = self.infer(x1, x2, *args, **kwargs)
-            extra = {f"{flag}ntoken": ntoken, f"{flag}main_loss": loss, f"{flag}nsample": nsample, f"{flag}ntrue": ntrue}
-            return loss, (ntoken, extra)
+            ppl_vec = self._estimate_ppl(losses) # ppl as the evel metric
+            ppl_sum = ppl_vec.sum()
+            extra = {
+                f"{flag}ntoken": ntoken, f"{flag}main_loss": loss, f"{flag}ppl": ppl_sum, 
+                f"nstep": 1, f"{flag}nsample": nsample, f"{flag}ntrue": ntrue,
+            } # hack to return the ppl vector so that we can use ppl's to rank results
+            return loss, (ntoken, extra), {f"{flag}ppl": ppl_vec}
         logits = self.logit_scale.exp() * x1
         loss, (ntoken, losses) = self._estimate_loss(logits, x2, *args, **kwargs)
-        extra = {f"{flag}ntoken": ntoken, f"{flag}main_loss": loss, f"{flag}nsample": nsample, f"{flag}ntrue": ntrue}
-        return loss, (ntoken, extra)
+        extra = {
+            f"{flag}ntoken": ntoken, f"{flag}main_loss": loss, f"{flag}ppl": -nsample,
+            f"nstep": 1, f"{flag}nsample": nsample, f"{flag}ntrue": ntrue,
+        }
+        return loss, (ntoken, extra), {}
 
     def couple_forward(self, x1, x2, *args, **kwargs):
-        t_loss, (t_ntoken, t_extra) = self.main_forward(x1[0], x2[0], flag="t_")
-        v_loss, (v_ntoken, v_extra) = self.main_forward(x1[1], x2[1], flag="v_")
+        t_loss, (t_ntoken, t_extra), t_more = self.main_forward(x1[0], x2[0], flag="t_")
+        v_loss, (v_ntoken, v_extra), v_more = self.main_forward(x1[1], x2[1], flag="v_")
+        more_dict = {**t_more, **v_more}
 
         loss = (t_loss + v_loss * self.vloss_beta) / (self.vloss_beta + 1)
+
         ntrue = t_extra["t_ntrue"] + v_extra["v_ntrue"]
         nsample = t_extra["t_nsample"]
         ntoken = t_ntoken + v_ntoken
 
-        extra = {"nstep": 1, "ntoken": ntoken, "main_loss": loss, "nsample": nsample, "ntrue": ntrue}
+        extra = {"ntoken": ntoken, "main_loss": loss, "nsample": nsample, "ntrue": ntrue}
         extra.update(t_extra)
         extra.update(v_extra)
-        return loss, (ntoken, extra) 
+        return loss, (ntoken, extra), more_dict
 
     def single_forward(self, x1, x2, *args, **kwargs):
-        loss, (ntoken, extra) = self.main_forward(x1[0], x2[0], flag="")
-        extra["nstep"] = 1
-        return loss, (ntoken, extra) 
+        loss, (ntoken, extra), more_dict = self.main_forward(x1[0], x2[0], flag="")
+        return loss, (ntoken, extra), more_dict
 
     def forward(self, x1, x2, *args, **kwargs):
         assert isinstance(x1, (list, tuple)) and isinstance(x2, (list, tuple)), f"except tuple/list"
