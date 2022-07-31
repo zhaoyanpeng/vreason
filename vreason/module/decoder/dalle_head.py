@@ -96,7 +96,6 @@ class DalleGPTDecHead(MetaDecHead, Infer):
         self.v_predictor = nn.Linear(cfg.m_dim, self.num_vis_token)
 
         self.stability = cfg.stability
-        self.cache = None
 
         self._reset_parameters()
 

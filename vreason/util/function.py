@@ -1,7 +1,8 @@
 import os
 import torch
+import textwrap
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from torch import nn, Tensor
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pad_sequence
@@ -116,7 +117,8 @@ def top_k_top_p_filtering(
     return logits
 
 def save_image_local(
-    root, names, images, nrow=-1, ncol=5, dpi=-1, margin=2, color=(255,) * 3, mode="RGB", use_plt=False
+    root, names, prompts, images, nrow=-1, ncol=5, dpi=-1, margin=2,
+    color=(255,) * 3, mode="RGB", use_plt=False, font=None, font_size=12,
 ):
     assert len(names) == len(images), f"require one2one mapping between names and images."
     assert isinstance(images, np.ndarray) and images.ndim == 5, f"require 4D numpy images (B, W, H, C, N)"
@@ -129,26 +131,41 @@ def save_image_local(
     nrow = int(np.ceil(N / ncol))
 
     if not use_plt:
+        font = font or "Lato-Thin.ttf"
+        assert True or os.path.isfile(font), f"please specify a font file."
+        font = ImageFont.truetype(font, font_size)
+        
+        text_line_width = 50
+        text_beg_height = 0.75
+
         ww = W + margin
         hh = H + margin
         pw = ww * ncol - margin
         ph = hh * nrow - margin
-        for i, name in enumerate(names):
+        for i, (name, prompt) in enumerate(zip(names, prompts)):
             fname = f"{root}/{name}.png"
             image_set = images[i].transpose(3, 0, 1, 2)
 
             panel = Image.new(mode, (pw, ph), color=color)
+            draw = ImageDraw.Draw(panel)
 
             for i, image in enumerate(image_set):
                 irow = i // ncol
                 icol = i %  ncol
                 image = Image.fromarray(image)
                 panel.paste(image, (icol * ww, irow * hh))
-
+            # draw text
+            lines = textwrap.wrap(prompt, width=text_line_width)
+            text_h = H * text_beg_height
+            for line in lines:
+                lw, lh = font.getsize(line)
+                draw.text(((W - lw) / 2, text_h), line, font=font)
+                text_h += lh
             panel.save(fname)
     else:
         dpi = max(dpi, H // 2)
-        for i, name in enumerate(names):
+        text_line_width = 120
+        for i, (name, prompt) in enumerate(zip(names, prompts)):
             fname = f"{root}/{name}.png"
             image_set = images[i].transpose(3, 0, 1, 2)
 
@@ -163,6 +180,10 @@ def save_image_local(
                 ax.imshow(image)
                 ax.axis('off')
                 ax.set(xticklabels=[], yticklabels=[], xticks=[], yticks=[])
+            # draw text
+            lines = textwrap.wrap(prompt, width=text_line_width)
+            #fig.suptitle("\n".join(lines), fontsize=4) #font_size)
 
-            plt.plot() 
+            #plt.plot() 
             plt.savefig(fname) 
+            plt.clf()

@@ -123,19 +123,29 @@ class Monitor(Meta):
         #self.echo(f"TEST {report}")
         return ""
 
-    def save_images(self, images, vfiles, sampled_images):
+    def save_images(
+        self, sampled_images, text=None, image=None, text_mask=None, vfile=None, **kwargs
+    ):
         if sampled_images is None:
             return
+        # text prompts
+        prompts = ["" for _ in range(sampled_images.shape[0])]
+        if text is not None:
+            lengths = ((~text_mask).sum(-1) - 1).cpu().tolist()
+            prompts = text[:, 1:].cpu().tolist()
+            prompts = self.encoder_vocab(prompts)
+            prompts = [" ".join(txt[:l]) for l, txt in zip(lengths, prompts)]
+        # sampled images
         images = (
-            (images.detach().cpu().clamp(-1, 1) + 1.) / 2 * 255.
+            (image.detach().cpu().clamp(-1, 1) + 1.) / 2 * 255.
         ).permute(0, 2, 3, 1).numpy().astype(np.uint8)
         all_images = np.concatenate(
             (images[..., None], sampled_images), axis=-1
         )
         # TODO try ... except ...
-        fnames = [fname.rsplit("/", 1)[1].rsplit(".", 1)[0] for fname in vfiles]
+        fnames = [fname.rsplit("/", 1)[1].rsplit(".", 1)[0] for fname in vfile]
         root = f"{self.cfg.alias_root}/{self.cfg.alias_name}/sample"
-        save_image_local(root, fnames, all_images)
+        save_image_local(root, fnames, prompts, all_images)
         
     def main_eval(self, dataloader, samples=float("inf"), iepoch=0):
 
@@ -174,9 +184,7 @@ class Monitor(Meta):
                 loss_mean, (ntoken, ret_dict) = self.model(**batch_dict)
             loss = loss_mean * 1 
             
-            self.save_images( # let us log some images
-                batch_dict["image"], batch_dict["vfile"], ret_dict.pop("image", None)
-            )
+            self.save_images(ret_dict.pop("image", None), **batch_dict) # let us log some images
 
             epoch_step += 1
             total_word += ntoken 

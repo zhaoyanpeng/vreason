@@ -21,3 +21,5 @@ vis_vocab_name: vis_vocab_is_null
 vis_vocab_size: ${..model.vq.vocab_size}
 txt_special_token: {}
 vis_special_token: {}
+txt_only: False
+vis_only: False

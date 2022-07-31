@@ -102,6 +102,54 @@ class ClevrImageTextData(torch.utils.data.Dataset):
             "vfile": vfile,
         }
 
+class ClevrImageData(ClevrImageTextData):
+    def __init__(
+        self, cfg, data_file, image_path, decoder_vocab=None,
+        encoder_vocab=None, cate_vocab=None, train=True, chunk=None, #slice(0, None)
+    ):
+        # the dataset is provided as a whole, we have to split it into train, val, and test sets.
+        self.decoder_vocab = decoder_vocab
+        self.encoder_vocab = encoder_vocab
+        # should be a f-str or can be formatted
+        self.vfile = image_path
+        self.train = train
+
+        # center it w/ a hard-coded center
+        self.resize_size = (
+            [cfg.resize_size] * 2 if isinstance(cfg.resize_size, int)
+            else list(cfg.resize_size)[:2]
+        )
+        self.crop_size = list(cfg.crop_size)[:4]
+        self.preprocessor = albumentations.Compose([
+            albumentations.SmallestMaxSize(max_size=self.resize_size[0]),
+            albumentations.CenterCrop(height=self.crop_size[-2],width=self.crop_size[-1])
+        ])
+
+        # load (a subset of) data
+        keyset = set(list(range(chunk[0], chunk[1]))) if chunk is not None else None
+        max_image_id= 70000 if train else 15000
+        valid_keyset = set(list(range(max_image_id)))
+        self.dataset = sorted(keyset & valid_keyset) if keyset is not None else sorted(valid_keyset)
+        
+        # load only image indice
+        self.length = len(self.dataset)
+        self.version = cfg.version
+
+    def preprocess_text(self, captions):
+        caption = [self.encoder_vocab.BOS_IDX]
+        return caption
+
+    def __getitem__(self, index):
+        index = self.dataset[index]
+
+        caption = self.preprocess_text(None)
+        image, _, vfile = self.preprocess_image(index=index)
+        return {
+            "text": caption,
+            "image": image, 
+            "vfile": vfile,
+        }
+
 class ClevrImageTextCollator:
     def __init__(self, device=torch.device("cpu"), vocab=None):
         self.device = device
@@ -141,7 +189,7 @@ def build_clevr_image_text_data(cfg, train, echo):
         ) # may want to append a <BOS> w/o changing image token indice
         decoder_vocab = DatasetCatalog.get(cfg.vis_vocab_name) 
 
-    extra_keys = [f"pad{i:03}" for i in range(cfg.max_txt_len)]
+    extra_keys = [] if cfg.vis_only else [f"pad{i:03}" for i in range(cfg.max_txt_len)]
     try:
         txt_vocab_file = f"{cfg.data_root}/{cfg.txt_vocab_name}"
         special_words = list(cfg.txt_special_token.values())
@@ -168,7 +216,7 @@ def build_clevr_image_text_data(cfg, train, echo):
         elif "val" in data_file:
             name = "/images/val/CLEVR_val_{:06}.png"
         else:
-            raise ValueError("cannot figure out data split")
+            raise ValueError(f"cannot figure out data split: {data_file}")
         return cfg.more_root + name 
 
     def get_sample_chunk(chunk):
@@ -177,15 +225,17 @@ def build_clevr_image_text_data(cfg, train, echo):
         return None 
 
     pin_memory = False
+    dataset_cls = ClevrImageData if cfg.vis_only else ClevrImageTextData
 
     # train
     name = cfg.data_name if train else cfg.eval_name
-    ifile = f"{cfg.data_root}/{name}"
-    assert os.path.isfile(ifile), f"not a data file {ifile}"
+    ifile = f"{cfg.data_root}/{name}" # txt file
+    skip = name is None or name == "" # not required when using only images
+    assert (os.path.isfile(ifile) or cfg.vis_only) and not skip, f"not a data file {ifile}"
     image_path = get_image_path(ifile)
     chunk = cfg.train_samples if train else cfg.eval_samples
     chunk = get_sample_chunk(chunk)
-    dataset = ClevrImageTextData(
+    dataset = dataset_cls(
         cfg, ifile, image_path, encoder_vocab=encoder_vocab, decoder_vocab=decoder_vocab,
         cate_vocab=cate_vocab, train=train, chunk=chunk
     )
@@ -194,11 +244,12 @@ def build_clevr_image_text_data(cfg, train, echo):
     )
 
     # eval
+    skip = not train or cfg.eval_name is None or cfg.eval_name == ""
     ifile = f"{cfg.data_root}/{cfg.eval_name}" if train else "IGNORE_ME"
-    if os.path.isfile(ifile):
+    if (os.path.isfile(ifile) or cfg.vis_only) and not skip:
         image_path = get_image_path(ifile)
         chunk = get_sample_chunk(cfg.eval_samples)
-        dataset = ClevrImageTextData(
+        dataset = dataset_cls(
             cfg, ifile, image_path, encoder_vocab=encoder_vocab, decoder_vocab=decoder_vocab,
             cate_vocab=cate_vocab, train=False, chunk=chunk
         )
@@ -207,11 +258,12 @@ def build_clevr_image_text_data(cfg, train, echo):
         )
 
     # test
+    skip = not train or cfg.test_name is None or cfg.test_name == ""
     ifile = f"{cfg.data_root}/{cfg.test_name}" if train else "IGNORE_ME"
-    if os.path.isfile(ifile):
+    if (os.path.isfile(ifile) or cfg.vis_only) and not skip:
         image_path = get_image_path(ifile)
         chunk = get_sample_chunk(cfg.test_samples)
-        dataset = ClevrImageTextData(
+        dataset = dataset_cls(
             cfg, ifile, image_path, encoder_vocab=encoder_vocab, decoder_vocab=decoder_vocab,
             cate_vocab=cate_vocab, train=False, chunk=chunk
         )

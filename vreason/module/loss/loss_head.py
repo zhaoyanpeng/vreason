@@ -207,6 +207,9 @@ class CoupleLMLossHead(MetaLossHead):
         return loss, (ntoken.cpu().item(), losses)
 
     def _estimate_ppl(self, x):
+        if x.shape[-1] == 0:
+            ppl = torch.tensor([0.] * x.shape[0]).to(x)
+            return ppl
         x = x.detach().clone()
         indice = torch.where(x)
         x[indice] = x[indice].exp()
@@ -238,7 +241,7 @@ class CoupleLMLossHead(MetaLossHead):
         logits = self.logit_scale.exp() * x1
         loss, (ntoken, losses) = self._estimate_loss(logits, x2, *args, **kwargs)
         extra = {
-            f"{flag}ntoken": ntoken, f"{flag}main_loss": loss, f"{flag}ppl": -nsample,
+            f"{flag}ntoken": ntoken, f"{flag}main_loss": loss, f"{flag}ppl": 0,
             f"nstep": 1, f"{flag}nsample": nsample, f"{flag}ntrue": ntrue,
         }
         return loss, (ntoken, extra), {}
@@ -254,7 +257,7 @@ class CoupleLMLossHead(MetaLossHead):
         nsample = t_extra["t_nsample"]
         ntoken = t_ntoken + v_ntoken
 
-        extra = {"ntoken": ntoken, "main_loss": loss, "nsample": nsample, "ntrue": ntrue}
+        extra = {"ntoken": ntoken, "main_loss": loss, "nsample": nsample, "ntrue": ntrue, "couple": True}
         extra.update(t_extra)
         extra.update(v_extra)
         return loss, (ntoken, extra), more_dict

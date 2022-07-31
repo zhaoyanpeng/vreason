@@ -22,10 +22,10 @@ __all__ = ["DalleTokenEncHead"]
 class DalleTokenEncHead(MetaEncHead):
     def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
         super().__init__(cfg, None)
-        assert cfg.mode.lower() in {"gpt", "bart"}, f"GPT (gpt) or BART (bart) embed mode"
-        self.mode = cfg.mode
-
         self._emb_size = cfg.embed_dim
+        self.txt_offset = cfg.txt_offset
+        self.vis_offset = cfg.vis_offset
+
         self.len_txt_seq = cfg.len_txt_seq
         self.len_vis_seq = cfg.len_vis_seq
         H = W = int(self.len_vis_seq ** 0.5)
@@ -37,13 +37,13 @@ class DalleTokenEncHead(MetaEncHead):
         self.num_vis_token = len(vis_token_vocab)
 
         self.txt_embed = eval(cfg.txt_embed)(
-            self.num_txt_token, self._emb_size, (self.len_txt_seq,),
+            self.num_txt_token, self._emb_size,
+            (self.len_txt_seq,), offset=self.txt_offset,
             tok_padding_idx=txt_token_vocab.PAD_IDX, use_pos_padding=False,
         )
         self.vis_embed = eval(cfg.vis_embed)(
             self.num_vis_token, self._emb_size, (H,) * 2,
-            offset=(1 if self.mode == "bart" else 0),
-            tok_padding_idx=None, use_pos_padding=False,
+            offset=self.vis_offset, tok_padding_idx=None, use_pos_padding=False,
         )
 
     def _reset_parameters(self):
@@ -55,7 +55,7 @@ class DalleTokenEncHead(MetaEncHead):
 
     @property
     def is_bart(self):
-        return self.mode == "bart" 
+        return self.vis_offset == 1
 
     def _encode_positions(self, t=None, v=None):
         if t is not None:

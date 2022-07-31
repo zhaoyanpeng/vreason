@@ -165,7 +165,6 @@ class Dalle(MetaSolver):
 
     def infer_dp(self, text=None, image=None, text_mask=None, analyze=False, device_ids=[0], **kwargs):
         pass
-        kwargs.update({"enc_cache": enc_cache, "dec_cache": dec_cache})
 
     def forward(self, text=None, image=None, text_mask=None, analyze=False, device_ids=[0], **kwargs):
         infer = kwargs.get("infer", False)
@@ -224,7 +223,7 @@ class Dalle(MetaSolver):
         meter = self.meter_train if self.training else self.meter_infer
         stats = meter.stats
 
-        if not self.embedder_head.is_bart:
+        if stats.get("couple", False):
             nstep = stats["nstep"]
             alpha = 1 / nstep if nstep > 0 else 0
             t_loss = stats["t_main_loss"] * alpha 
@@ -240,7 +239,7 @@ class Dalle(MetaSolver):
             v_acc = stats["v_ntrue"] * alpha
 
             ntoken = stats["ntoken"]
-            alpha = 1 / ntoken if ntoken > 0 else 0
+            alpha = 1 / ntoken * 100 if ntoken > 0 else 0
             acc = stats["ntrue"] * alpha
 
             nsample = stats["nsample"]
@@ -248,7 +247,7 @@ class Dalle(MetaSolver):
             t_ppl = stats["t_ppl"] * alpha
             v_ppl = stats["v_ppl"] * alpha
 
-            info += f"t_acc {t_acc:.3f} t_ppl {t_ppl:.3f} v_ppl {v_ppl:.3f} v_acc {v_acc:.3f} acc {acc:.3f}"
+            info += f"t_ppl {t_ppl:.3f} v_ppl {v_ppl:.3f} t_acc {t_acc:.3f} v_acc {v_acc:.3f} acc {acc:.3f}"
         else:
             nstep = stats["nstep"]
             alpha = 1 / nstep if nstep > 0 else 0
@@ -274,13 +273,13 @@ class Dalle(MetaSolver):
         nsample = stats["nsample"]
         alpha = 1 / nsample * 1 if nsample > 0 else 0
 
-        if not self.embedder_head.is_bart:
+        if stats.get("couple", False):
             t_ppl = stats["t_ppl"] * alpha
             v_ppl = stats["v_ppl"] * alpha
             ppl = (t_ppl + v_ppl) / 2
         else:
             ppl = stats["ppl"] * alpha
-        return ppl 
+        return -ppl 
 
     def tokenize_images(self, v):
         return self.vq.encode(v)
