@@ -1,0 +1,5 @@
+name: PCFGLossHead
+layers: []
+scaling: False 
+kl_alpha: 1e-2 
+kl_max: 5e1 

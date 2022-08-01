@@ -32,6 +32,18 @@ class MetaDecHead(nn.Module):
     @property
     def output_size(self):
         return 0 
+    def extra_repr(self):
+        mod_keys = self._modules.keys()
+        all_keys = self._parameters.keys()
+        extra_keys = all_keys - mod_keys
+        extra_keys = [k for k in all_keys if k in extra_keys]
+        extra_lines = []
+        for key in extra_keys:
+            attr = getattr(self, key)
+            if not isinstance(attr, nn.Parameter):
+                continue
+            extra_lines.append("({}): Tensor{}".format(key, tuple(attr.size())))
+        return "\n".join(extra_lines)
 
 @DECODER_HEADS_REGISTRY.register()
 class TorchTFDecHead(MetaDecHead):

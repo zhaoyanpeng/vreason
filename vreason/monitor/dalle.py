@@ -32,7 +32,12 @@ class Monitor(Meta):
         pass
 
     def step(self, loss=None, **kwargs):
-        pass
+        if self.cfg.optimizer.max_gnorm is not None:
+            torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), self.cfg.optimizer.max_gnorm
+            )
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
 
     def build_data(self):
         self.dataloader, self.evalloader, self.testloader, \
@@ -78,8 +83,7 @@ class Monitor(Meta):
             with torch.cuda.amp.autocast():
                 loss, _ = self.model(**batch_dict)
             self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            self.step()
 
 
             self.timeit(all_time, key="model")

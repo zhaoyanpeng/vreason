@@ -103,8 +103,9 @@ class Monitor(object):
     def post_step(
         self, iepoch, epoch_step, force_eval, warmup, nchunk
     ):
-        if not self.cfg.optimizer.use_lars and self.cfg.optimizer.batch_sch and not warmup:
-            old_lrs = " ".join([f"{x:.2e}" for x in self.scheduler.get_last_lr()])
+        if not self.cfg.optimizer.use_lars and self.cfg.optimizer.batch_sch and \
+            not warmup and self.scheduler is not None:
+            #old_lrs = " ".join([f"{x:.2e}" for x in self.scheduler.get_last_lr()])
             self.scheduler.step() # after all warmup is completed
             if isinstance(self.scheduler, (CosineAnnealingWarmRestarts,)):
                 force_eval = self.scheduler.get_last_lr() == self.scheduler.base_lrs

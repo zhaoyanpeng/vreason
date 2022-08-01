@@ -274,3 +274,61 @@ class CoupleLMLossHead(MetaLossHead):
         else:
             return self.single_forward(x1, x2, *args, **kwargs)
             
+@LOSS_HEADS_REGISTRY.register()
+class PCFGLossHead(MetaLossHead):
+    def __init__(self, cfg, token_vocab, **kwargs):
+        super().__init__(cfg, token_vocab)
+        self.token_vocab = token_vocab
+        self.logit_scale = (
+            nn.Parameter(torch.ones([]) * np.log(1 / 0.07)) if cfg.scaling else
+            torch.ones([], requires_grad=False) * np.log(1 / 1)
+        )
+        self.ignore_index = -100 #self.token_vocab.PAD_IDX
+        self.loss_fn = None #nn.CrossEntropyLoss(
+        #    reduction="none", ignore_index=self.ignore_index
+        #)
+        self.accuracies = {word: [0] * 2 for word in ["overall"]}
+        self.kl_alpha = cfg.kl_alpha
+        self.kl_max = cfg.kl_max
+        self.reduce = False 
+
+    def report(self, gold_file=None):
+        # compute accuracies, called every epoch
+        result = ""
+        return result 
+
+    def _estimate_loss(self, x, ll, kl, **kwargs):
+        loss = (kl * self.kl_alpha - ll).mean()
+        ntoken = (x != self.ignore_index).sum()
+        return loss, (ntoken.cpu().item(), None)
+
+    def _estimate_ppl(self, x):
+        if x.shape[-1] == 0:
+            ppl = torch.tensor([0.] * x.shape[0]).to(x)
+            return ppl
+        x = x.detach().clone()
+        indice = torch.where(x)
+        x[indice] = x[indice].exp()
+        cnt = torch.unique(indice[0], return_counts=True)[1].clamp(min=1)
+        ppl = x.sum(1) / cnt
+        return ppl
+
+    def infer(self, x1, x2, *args, **kwargs): 
+        results = self._estimate_loss(x1, x2)
+        return results
+    
+    def predict(self, x1, x2):
+        return x1.shape[0], 0 
+
+    def forward(self, x, ll, kl=None, *args, **kwargs):
+        kl = torch.zeros_like(ll) if kl is None else kl
+        kl.clamp_(max=self.kl_max)
+        
+        loss, (ntoken, _) = self._estimate_loss(x, ll, kl, **kwargs)
+
+        nsample = x.shape[0]
+        extra = {
+            "main_loss": loss, "ll": ll.detach().sum(), "kl": kl.detach().sum(),
+            "nsample": nsample, "ntoken": ntoken + nsample, "nstep": 1
+        } # ntoken = length + 1
+        return loss, (ntoken, extra), {}

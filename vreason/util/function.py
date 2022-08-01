@@ -76,6 +76,20 @@ def flip_and_shift(x, lengths, batch_first=True):
         return x_reverse.transpose(0, 1)
     return x_reverse
 
+def stripe(x, n, w, offset=(0, 0), dim=1):
+    assert dim in {0, 1}, f"strip along row (1) or column (0)."
+    x = x.contiguous()
+    b, H, W = x.shape[:3]
+    stride = list(x.stride())
+    numel = stride[2]
+    stride[1] = (W + 1) * numel
+    stride[2] = (1 if dim == 1 else W) * numel
+    offset = (offset[0] * W + offset[1]) * numel
+    size = (b, n, w) if x.dim() <= 3 else (b, n, w, *list(x.shape[3:]))
+    return x.as_strided(
+        size=size, stride=stride, storage_offset=offset
+    )
+
 def top_k_top_p_filtering(
     logits: Tensor,
     top_k: int = 0,

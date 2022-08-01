@@ -1,0 +1,7 @@
+name: NaiveIPCFGDecHead
+NT: 20
+T: 10 
+h_dim: 512
+w_dim: 512
+z_dim: 128
+s_dim: 256
