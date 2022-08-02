@@ -172,52 +172,59 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 sub_type_area, sub_beta_area, ab_rule_prob, term_prob[..., x, :]
             )
             beta_area[..., x, x + 1, :] = new_beta_area #+ sub_type_area
+
+        def xyz(sl, sr, rule_prob):
+            beta = ( # bkr, bkr, bslr
+                sl.unsqueeze(1).unsqueeze(-2) + # (B, 1, k, s, r, 1, x)
+                sr.unsqueeze(1).unsqueeze(-3) + # (B, 1, k, s, 1, r, x)
+                rule_prob.unsqueeze(2).unsqueeze(2).unsqueeze(-1) # (B, S, 1, 1, r, r, 1)
+            ).logsumexp((-2, -3, -4)) # (B, S, k, x)
+            return beta
             
         # area >= 2 x 2
         for h in range(2, H + 1):
             for w in range(2, W + 1):
                 if verbose:
                     print(f"h {h} w {w}")
-                for y in range(H + 1 - h):
-                    for x in range(W + 1 - w):
                         
-                        ##################################
-                        # enumerate all possible ways of #
-                        #  composing a given rectangle   #
-                        ##################################
-                        
-                        # case 1: left-right composition
-                        # --------
-                        # |  |   |
-                        # |  |   |
-                        # |  |   |
-                        # |  |   |
-                        # --------
-                        sl = beta_area[:, y, y + h, x, x + 1 : x + w] # (B, k, l)
-                        sr = beta_area[:, y, y + h, x + 1 : x + w, x + w] # (B, k, r)
-                        beta1 = ( # bl, br, bslr
-                            sl.unsqueeze(1).unsqueeze(-1) + # (B, 1, k, l, 1)
-                            sr.unsqueeze(1).unsqueeze(-2) + # (B, 1, k, l, r)
-                            lr_Y_Z.unsqueeze(2) # (B, S, 1, l, r)
-                        ).logsumexp((3, 4)) # (B, S, k)
+                ##################################
+                # enumerate all possible ways of #
+                #  composing a given rectangle   #
+                ##################################
 
-                        # case 2: above-below composition
-                        # --------
-                        # |      |
-                        # |      |
-                        # |~~~~~~|
-                        # |      |
-                        # --------
-                        sa = beta_area[:, y, y + 1 : y + h, x, x + w]
-                        sb = beta_area[:, y + 1 : y + h, y + h, x, x + w] 
-                        beta2 = ( # bl, br, bslr
-                            sa.unsqueeze(1).unsqueeze(-1) + # (B, 1, k, l, 1)
-                            sb.unsqueeze(1).unsqueeze(-2) + # (B, 1, k, l, r)
-                            ab_Y_Z.unsqueeze(2) # (B, S, 1, l, r)
-                        ).logsumexp((3, 4)) # (B, S, k)
-                        
-                        beta = torch.cat((beta1, beta2), dim=-1).logsumexp(-1)
-                        beta_area[:, y, y + h, x, x + w] = beta + type_area[:, y, y + h, x, x + w]
+                y = torch.arange(H + 1 - h).to(device)
+                x = torch.arange(W + 1 - w).to(device)
+                
+                # case 1: left-right composition
+                # --------
+                # |  |   |
+                # |  |   |
+                # |  |   |
+                # |  |   |
+                # --------
+                sub_beta_area = beta_area[:, y, y + h].permute(0, 2, 3, 4, 1)
+                sl = stripe(sub_beta_area, W + 1 - w, w - 1, (0, 1), 1) # (B, kx, s, r, y)
+                sr = stripe(sub_beta_area, W + 1 - w, w - 1, (1, w), 0) # (B, kx, s, r, y)
+                beta1 = xyz(sl, sr, lr_Y_Z).permute(0, 3, 2, 1) # (B, S, kx, y) -> (B, y, kx, S)
+
+                # case 2: above-below composition
+                # --------
+                # |      |
+                # |      |
+                # |~~~~~~|
+                # |      |
+                # --------
+                sub_beta_area = beta_area[..., x, x + w, :].permute(0, 1, 2, 4, 3)
+                sa = stripe(sub_beta_area, H + 1 - h, h - 1, (0, 1), 1) # (B, ky, s, r, x)
+                sb = stripe(sub_beta_area, H + 1 - h, h - 1, (1, h), 0) # (B, ky, s, r, x)
+                beta2 = xyz(sa, sb, ab_Y_Z).permute(0, 2, 3, 1) # (B, S, ky, x) -> (B, ky, x, S)
+                
+                # summarize betas
+                beta = torch.stack((beta1, beta2), dim=-1).logsumexp(-1) # (B, S, y, x)
+                
+                y = y.repeat_interleave(W + 1 - w)
+                x = x.repeat(H + 1 - h)
+                beta_area[:, y, y + h, x, x + w] = beta[:, y, x] + type_area[:, y, y + h, x, x + w]
                         
         final = beta_area[:, 0, H, 0, W] + root_prob
         # final = beta_area[:, 0, H, 0, W]
@@ -266,13 +273,6 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             (B, H, H + 1, W, W + 1, NT), device=device
         ).requires_grad_(infer or require_marginal)
         
-#         # copy pre-terminals
-#         x = torch.arange(W).repeat(H).to(device)
-#         y = torch.arange(H).repeat_interleave(W).to(device)
-#         beta_area[:, y, y + 1, x, x + 1] = (
-#             type_area[:, y, y + 1, x, x + 1] + term_prob[:, y, x] # NT ? (>, <, or =) T
-#         )
-
         for y in range(H): # area 1 x w
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1, NT)
             sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1, NT)
