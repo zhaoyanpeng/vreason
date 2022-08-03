@@ -220,6 +220,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         memory: Tensor=None,
         memo_attn_mask: Tensor=None,
         memo_key_padding_mask: Tensor=None,
+        require_marginal: bool=False,
         parallel: bool=True, 
         verbose: bool=False,
         infer: bool=False,
@@ -240,7 +241,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
             )
 
         outs = self.partition(
-            infer=False, require_marginal=False, verbose=verbose, parallel=parallel
+            infer=infer, require_marginal=require_marginal, verbose=verbose, parallel=parallel, **kwargs
         ) # ll, argmax, marginal, {}
         outs = (outs[0], kl, x) + outs[1:]
         return outs

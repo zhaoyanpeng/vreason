@@ -65,10 +65,25 @@ class IPCFG(Dalle):
         v_seq = self.tokenize_images(image)
         #*_ = self.embedder_head(text, v_seq=v_seq)
         #*_ = self.encoder_head(t_emb, v_emb, t_seq=text, v_seq=v_seq, self_key_padding_mask=text_mask, **kwargs)
+        
+        """
+        kwargs.update({
+            "infer": True,
+            "auto_infer": True,
+            "exclude_trivial": True,
+            "require_marginal": True,
+            "marginal_as_dict": True,
+        })
+        """
 
         ll, kl, targets, argmax, marginal, dec_extra = self.decoder_head(
             t_emb, v_emb, t_seq=text, v_seq=v_seq, memo_key_padding_mask=text_mask, **kwargs
         )
+
+        #print(dec_extra["argmax"][0])
+        #print(dec_extra["marginal"][0].shape)
+        #print(dec_extra["marginal"].keys())
+        #import sys; sys.exit(0)
         
         loss, outs, *_ = self.loss_head(targets, ll, kl=kl)
         self.set_stats(dec_extra, outs[-1])
