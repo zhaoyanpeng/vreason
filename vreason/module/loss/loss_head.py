@@ -1,6 +1,7 @@
 import numpy as np
 import os, sys, time, math
 import torch
+import torch.nn.functional as F
 from torch import nn, Tensor
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 
@@ -23,7 +24,7 @@ class MetaLossHead(nn.Module):
         pass
     def infer(self):
         pass
-    def report(self):
+    def report(self, gold_file=None):
         return ""
 
 @LOSS_HEADS_REGISTRY.register()
@@ -263,7 +264,8 @@ class CoupleLMLossHead(MetaLossHead):
         return loss, (ntoken, extra), more_dict
 
     def single_forward(self, x1, x2, *args, **kwargs):
-        loss, (ntoken, extra), more_dict = self.main_forward(x1[0], x2[0], flag="")
+        x1, x2 = x1[0], x2[0]
+        loss, (ntoken, extra), more_dict = self.main_forward(x1, x2, flag="")
         return loss, (ntoken, extra), more_dict
 
     def forward(self, x1, x2, *args, **kwargs):

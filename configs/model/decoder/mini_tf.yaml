@@ -1,0 +1,25 @@
+name: MiniTFDecHead
+block: MiniTFBlock
+m_dim: 1024 # model
+f_dim: 4096 # forward
+num_layer: 12 
+stability: 0.1 # applied to the embedded 
+t_dropout: 0.1 # tf dropout
+attn_dropout: ${.t_dropout} 
+proj_dropout: 0. 
+attn_cls_intra: MiniTFAttention
+attn_cls_inter: null 
+num_head: 16 
+num_head_intra: null
+num_head_inter: null
+inter_layers: []
+activation: gelu
+norm_first: False
+qk_scale: null
+
+max_dec_len: 30
+len_txt_seq: ${..embedder.len_txt_seq} 
+len_vis_seq: ${..embedder.len_vis_seq} 
+block_size: ${sum:${.len_txt_seq},${.len_vis_seq}}
+contx_size: ${.block_size}
+infer_mode: ll

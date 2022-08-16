@@ -5,6 +5,7 @@ from .slot_learner import SlotLearner
 from .dalle import Dalle
 from .ipcfg import IPCFG 
 from .igpt import IGPT 
+from .mingpt import MinIGPT
 
 from fvcore.common.registry import Registry
 
@@ -23,3 +24,4 @@ VQ_MODELS_REGISTRY.register(SlotLearner)
 VQ_MODELS_REGISTRY.register(Dalle)
 VQ_MODELS_REGISTRY.register(IPCFG)
 VQ_MODELS_REGISTRY.register(IGPT)
+VQ_MODELS_REGISTRY.register(MinIGPT)

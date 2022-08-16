@@ -7,6 +7,7 @@ import json
 import time
 import torch
 import random
+import datetime
 import numpy as np
 from torch import nn, Tensor
 
@@ -64,7 +65,10 @@ class Monitor(Meta):
         self.timeit(all_time)        
         device_ids = [i for i in range(self.cfg.num_gpus)]
         nchunk = dist.get_world_size() if torch.distributed.is_initialized() else 1  
-        warmup_step_rate = max(self.cfg.optimizer.warmup_steps // self.cfg.optimizer.warmup_times, 1)
+        warmup_step_rate = (-1 if self.scheduler is None else
+            max(self.cfg.optimizer.warmup_steps // self.cfg.optimizer.warmup_times, 1)
+        )
+        visual_peep_rate = max(len(self.dataloader) // self.cfg.running.v_peep_time, 1)
         def do_batch(batch, step):
             epoch_step = step #% len(self.dataloader)
 
@@ -72,6 +76,9 @@ class Monitor(Meta):
 
             batch_dict = self.make_batch(batch) 
             batch_dict["device_ids"] = device_ids
+
+            v_peep_topk = self.cfg.running.v_peep_topk if step % visual_peep_rate == 0 else -1
+            batch_dict["v_peep_topk"] = v_peep_topk # save some sampled images
 
             self.optim_step += 1 
             bsize = batch_dict["image"].shape[0]
@@ -81,12 +88,16 @@ class Monitor(Meta):
             
 
             with torch.cuda.amp.autocast():
-                loss, _ = self.model(**batch_dict)
+                loss, (ntoken, ret_dict) = self.model(**batch_dict)
             self.scaler.scale(loss).backward()
             self.step()
 
 
             self.timeit(all_time, key="model")
+
+            self.save_images(
+                ret_dict, outdir="train", prefix=f"e{iepoch:04d}-s{epoch_step:07d}-", **batch_dict
+            ) # let us log some images
 
             self.num_sents += bsize 
 
@@ -108,8 +119,8 @@ class Monitor(Meta):
                 pass #continue
             criteria = do_batch(batch_data, epoch_step + 1)
 
-        if not self.cfg.optimizer.use_lars and not self.cfg.optimizer.batch_sch and \
-            self.scheduler is not None:
+        if self.scheduler is not None and not self.cfg.optimizer.use_lars and \
+            not self.cfg.optimizer.batch_sch:
             self.scheduler.step()
         self.timeit(all_time, show=True)
 
@@ -127,30 +138,6 @@ class Monitor(Meta):
         #self.echo(f"TEST {report}")
         return ""
 
-    def save_images(
-        self, sampled_images, text=None, image=None, text_mask=None, vfile=None, **kwargs
-    ):
-        if sampled_images is None:
-            return
-        # text prompts
-        prompts = ["" for _ in range(sampled_images.shape[0])]
-        if text is not None:
-            lengths = ((~text_mask).sum(-1) - 1).cpu().tolist()
-            prompts = text[:, 1:].cpu().tolist()
-            prompts = self.encoder_vocab(prompts)
-            prompts = [" ".join(txt[:l]) for l, txt in zip(lengths, prompts)]
-        # sampled images
-        images = (
-            (image.detach().cpu().clamp(-1, 1) + 1.) / 2 * 255.
-        ).permute(0, 2, 3, 1).numpy().astype(np.uint8)
-        all_images = np.concatenate(
-            (images[..., None], sampled_images), axis=-1
-        )
-        # TODO try ... except ...
-        fnames = [fname.rsplit("/", 1)[1].rsplit(".", 1)[0] for fname in vfile]
-        root = f"{self.cfg.alias_root}/{self.cfg.alias_name}/sample"
-        save_image_local(root, fnames, prompts, all_images)
-        
     def main_eval(self, dataloader, samples=float("inf"), iepoch=0):
 
         if isinstance(samples, (tuple, list, ListConfig)): 
@@ -165,6 +152,11 @@ class Monitor(Meta):
         if isinstance(self.model, DistributedDataParallel):
             dataloader.sampler.set_epoch(iepoch)
             nchunk = self.cfg.num_gpus
+
+        visual_peep_rate = int(max(len(dataloader) // self.cfg.running.v_peep_time, 1))
+        odir = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S") + f"-{self.cfg.alias_odir}" 
+        odir = odir if self.cfg.running.infer_mode else "val"
+
         peep_rate = max(10, (len(dataloader) // 10))
         epoch_step = total_word = 0
         start_time = time.time()
@@ -182,13 +174,18 @@ class Monitor(Meta):
             batch_dict["nsampling"] = self.cfg.running.nsampling 
             batch_dict["device_ids"] = device_ids
 
+            v_peep_topk = self.cfg.running.v_peep_topk if ibatch % visual_peep_rate == 0 else -1
+            batch_dict["v_peep_topk"] = v_peep_topk # save some sampled images
+
             bsize = batch_dict["image"].shape[0]
 
             with torch.cuda.amp.autocast():
                 loss_mean, (ntoken, ret_dict) = self.model(**batch_dict)
             loss = loss_mean * 1 
             
-            self.save_images(ret_dict.pop("image", None), **batch_dict) # let us log some images
+            self.save_images(
+                ret_dict, outdir=odir, prefix=f"e{iepoch:04d}-s{epoch_step:07d}-", **batch_dict
+            ) # let us log some images
 
             epoch_step += 1
             total_word += ntoken 
@@ -209,3 +206,38 @@ class Monitor(Meta):
         if stats != "": # could be empty
             self.echo(f"EVAL STATS: {model.stats()}")
         return model.report()
+
+    def save_images(
+        self, sampled, text=None, image=None, text_mask=None, vfile=None, outdir="", prefix="", **kwargs
+    ):
+        if sampled is None or len(sampled) == 0:
+            return
+        labeled = [(k, v) for k, v in sampled.items() if k.startswith("_sample")]
+        if len(labeled) <= 0:
+            return
+        nsample = sampled["nsample"]
+        image = image[:nsample]
+        vfile = vfile[:nsample]
+        # text prompts
+        prompts = ["" for _ in range(image.shape[0])]
+        if text is not None:
+            text = text[:nsample]
+            text_mask = text_mask[:nsample]
+            lengths = ((~text_mask).sum(-1) - 1).cpu().tolist()
+            prompts = text[:, 1:].cpu().tolist()
+            prompts = self.encoder_vocab(prompts)
+            prompts = [" ".join(txt[:l]) for l, txt in zip(lengths, prompts)]
+        # gold images
+        images = (
+            (image.detach().cpu().clamp(-1, 1) + 1.) / 2 * 255.
+        ).permute(0, 2, 3, 1).numpy().astype(np.uint8)
+        # sampled images
+        all_labels = ["Gold"] + [k for k, v in labeled]
+        all_images = [images] + [v for k, v in labeled]
+        all_images = np.concatenate(
+            [x[..., None] for x in all_images], axis=-1
+        )
+        # TODO try ... except ...
+        fnames = [prefix + fname.rsplit("/", 1)[1].rsplit(".", 1)[0] for fname in vfile]
+        root = f"{self.cfg.alias_root}/{self.cfg.alias_name}/{outdir}"
+        save_image_local(root, fnames, prompts, all_images, labels=all_labels)

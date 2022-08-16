@@ -9,3 +9,5 @@ batch_size: 32
 epochs: 30 
 save_epoch: False 
 optim_rate: 1
+v_peep_time: 10 # check the v generation
+v_peep_topk: 5  # the first k in a batch

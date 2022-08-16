@@ -226,7 +226,7 @@ class Monitor(Meta):
             ocfg = self.cfg.optimizer.optimizer
             scfg = self.cfg.optimizer.scheduler
             self.optimizer = getattr(torch.optim, ocfg[0])(param_groups, **ocfg[1])
-            self.scheduler = None if len(scfg) < 2 else getattr(
+            self.scheduler = None if scfg is None or len(scfg) < 2 else getattr(
                 torch.optim.lr_scheduler, scfg[0]
             )(self.optimizer, **scfg[1])
         if not self.cfg.verbose or not verbose:

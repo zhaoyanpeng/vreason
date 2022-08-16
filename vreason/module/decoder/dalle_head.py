@@ -17,7 +17,7 @@ else:
     from torch.nn import TransformerEncoder, TransformerEncoderLayer
     from torch.nn import TransformerDecoder, TransformerDecoderLayer
 
-__all__ = ["DalleGPTDecHead", "DalleBartDecHead"]
+__all__ = ["Infer", "DalleGPTDecHead", "DalleBartDecHead"]
 
 class Infer: # a standalone class
     def _debug_cache(self, cache):
@@ -73,7 +73,12 @@ class DalleGPTDecHead(MetaDecHead, Infer):
                 cfg.m_dim, cfg.num_head, cfg.f_dim, cfg.t_dropout, 
                 activation=cfg.activation, norm_first=cfg.norm_first
             )
-            self.encoder = TransformerEncoder(layer_fn, cfg.num_layer)
+            iln = oln = lambda x: x
+            if cfg.norm_first:
+                oln = nn.LayerNorm(cfg.m_dim)
+            else:
+                iln = nn.LayerNorm(cfg.m_dim)
+            self.encoder = TransformerEncoder(layer_fn, cfg.num_layer, iln=iln, oln=oln)
 
             self_attn_mask = (torch.triu(
                 torch.ones(cfg.block_size, cfg.block_size, dtype=torch.uint8), 
@@ -81,6 +86,7 @@ class DalleGPTDecHead(MetaDecHead, Infer):
             self.register_buffer("self_attn_mask", self_attn_mask) 
 
         self.num_head = cfg.num_head
+        self.stability = cfg.stability
 
         self.len_txt_seq = cfg.len_txt_seq
         self.len_vis_seq = cfg.len_vis_seq
@@ -88,14 +94,8 @@ class DalleGPTDecHead(MetaDecHead, Infer):
         self.txt_token_vocab = txt_token_vocab
         self.vis_token_vocab = vis_token_vocab
 
-        self.num_txt_token = len(txt_token_vocab)
-        self.num_vis_token = len(vis_token_vocab)
-
-        self.ln_output = nn.LayerNorm(cfg.m_dim) if cfg.norm_first else nn.Identity()
-        self.t_predictor = nn.Linear(cfg.m_dim, self.num_txt_token)
-        self.v_predictor = nn.Linear(cfg.m_dim, self.num_vis_token)
-
-        self.stability = cfg.stability
+        self.t_predictor = nn.Linear(cfg.m_dim, len(txt_token_vocab))
+        self.v_predictor = nn.Linear(cfg.m_dim, len(vis_token_vocab))
 
         self._reset_parameters()
 
@@ -108,6 +108,7 @@ class DalleGPTDecHead(MetaDecHead, Infer):
         memory: Tensor=None,
         memo_attn_mask: Tensor=None,
         memo_key_padding_mask: Tensor=None,
+        force_infer: bool=False, # infer during training
         infer: bool=False,
         **kwargs,
     ):
@@ -115,7 +116,7 @@ class DalleGPTDecHead(MetaDecHead, Infer):
         # `x_seq' is the original sequence of (B, L).
         if memory is None: # may or may not have inter attention
             memory = memo_attn_mask = memo_key_padding_mask = None 
-        if infer and not self.training:
+        if force_infer or (infer and not self.training):
             return self.dispatch_inference(
                 t, v, t_seq = t_seq, v_seq = v_seq,
                 memory=memory,
@@ -147,8 +148,6 @@ class DalleGPTDecHead(MetaDecHead, Infer):
 
         x = x.transpose(0, 1)
 
-        x = self.ln_output(x)
-
         x_txt = x[:, :self.len_txt_seq - 1]
         x_txt = self.t_predictor(x_txt)
 
@@ -158,7 +157,10 @@ class DalleGPTDecHead(MetaDecHead, Infer):
         t_seq = x_seq[:, 1:self.len_txt_seq].contiguous()
         v_seq = x_seq[:, -self.len_vis_seq:].contiguous()
 
-        return (x_txt, x_vis), (t_seq, v_seq), None, {}
+        if self.len_txt_seq == 1:
+            return (x_vis,), (v_seq,), None, {}
+        else:
+            return (x_txt, x_vis), (t_seq, v_seq), None, {}
 
     def infer(
         self,
@@ -170,7 +172,7 @@ class DalleGPTDecHead(MetaDecHead, Infer):
         memo_attn_mask: Tensor=None,
         memo_key_padding_mask: Tensor=None,
         sampling: bool=True,
-        use_cache: bool=True,
+        use_cache: bool=False,
         cache: Tensor=None,
         **kwargs,
     ): # one-step inference
@@ -192,8 +194,6 @@ class DalleGPTDecHead(MetaDecHead, Infer):
 
         #self._debug_cache((t, v, x))
 
-        x = self.ln_output(x)
-
         x_txt = x[:, :self.len_txt_seq - 1]
         x_txt = self.t_predictor(x_txt)
 
@@ -206,7 +206,10 @@ class DalleGPTDecHead(MetaDecHead, Infer):
         if not sampling: # logits are not for sampling
             x_vis = x_vis[:, :v_seq.shape[1]]
 
-        return (x_txt, x_vis), (t_seq, v_seq), cache, {}
+        if self.len_txt_seq == 1:
+            return (x_vis,), (v_seq,), cache, {}
+        else:
+            return (x_txt, x_vis), (t_seq, v_seq), cache, {}
 
 @DECODER_HEADS_REGISTRY.register()
 class DalleBartDecHead(MetaDecHead, Infer):
@@ -218,7 +221,12 @@ class DalleBartDecHead(MetaDecHead, Infer):
                 cfg.m_dim, cfg.num_head, cfg.f_dim, cfg.t_dropout, 
                 activation=cfg.activation, norm_first=cfg.norm_first
             )
-            self.encoder = TransformerDecoder(layer_fn, cfg.num_layer)
+            iln = oln = lambda x: x
+            if cfg.norm_first:
+                oln = nn.LayerNorm(cfg.m_dim)
+            else:
+                iln = nn.LayerNorm(cfg.m_dim)
+            self.encoder = TransformerDecoder(layer_fn, cfg.num_layer, iln=iln, oln=oln)
 
             self_attn_mask = (torch.triu(
                 torch.ones(cfg.block_size, cfg.block_size, dtype=torch.uint8), 
@@ -226,15 +234,12 @@ class DalleBartDecHead(MetaDecHead, Infer):
             self.register_buffer("self_attn_mask", self_attn_mask) 
 
         self.num_head = cfg.num_head
+        self.stability = cfg.stability
 
         self.len_vis_seq = cfg.len_vis_seq
         self.vis_token_vocab = vis_token_vocab
-        self.num_vis_token = len(vis_token_vocab)
 
-        self.ln_output = nn.LayerNorm(cfg.m_dim) if cfg.norm_first else nn.Identity()
-        self.predictor = nn.Linear(cfg.m_dim, self.num_vis_token)
-
-        self.stability = cfg.stability
+        self.predictor = nn.Linear(cfg.m_dim, len(vis_token_vocab))
 
         self._reset_parameters()
 
@@ -247,6 +252,7 @@ class DalleBartDecHead(MetaDecHead, Infer):
         memory: Tensor=None,
         memo_attn_mask: Tensor=None,
         memo_key_padding_mask: Tensor=None,
+        force_infer: bool=False, # infer during training
         infer: bool=False,
         **kwargs,
     ):
@@ -254,7 +260,7 @@ class DalleBartDecHead(MetaDecHead, Infer):
         # `x_seq' is the original sequence of (B, L).
         if memory is None: # may or may not have inter attention
             memory = memo_attn_mask = memo_key_padding_mask = None 
-        if infer and not self.training:
+        if force_infer or (infer and not self.training):
             return self.dispatch_inference(
                 t, v, t_seq = t_seq, v_seq = v_seq,
                 memory=memory,
@@ -288,7 +294,6 @@ class DalleBartDecHead(MetaDecHead, Infer):
 
         x = x.transpose(0, 1)
 
-        x = self.ln_output(x)
         x = self.predictor(x) 
         return (x,), (x_seq,), None, {}
 
@@ -302,7 +307,7 @@ class DalleBartDecHead(MetaDecHead, Infer):
         memo_attn_mask: Tensor=None,
         memo_key_padding_mask: Tensor=None,
         sampling: bool=True,
-        use_cache: bool=True,
+        use_cache: bool=False,
         cache: Tensor=None,
         **kwargs,
     ): # one-step inference
@@ -330,7 +335,6 @@ class DalleBartDecHead(MetaDecHead, Infer):
         
         #self._debug_cache((memory, v, x))
 
-        x = self.ln_output(x)
         x = self.predictor(x) 
 
         if not sampling: # logits are not for sampling

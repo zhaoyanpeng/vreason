@@ -1,0 +1,10 @@
+name: ${.opt_name}
+use_lars: False 
+lr: 5e-4
+learning_rate: ${.lr}
+weight_decay: 1e-2 
+betas: [0.9, 0.95]
+max_gnorm: 1.
+warmup: False 
+epochs: ${running.epochs}
+opt_name: AdamW

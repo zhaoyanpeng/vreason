@@ -1,8 +1,8 @@
 name: DalleTokenEncHead
-mode: gpt 
 embed_dim: 1024 
 txt_embed: Hard1DEmbedder
 vis_embed: Hard1DEmbedder
+e_dropout: 0.1 # embedding dropout
 txt_offset: 0
 vis_offset: 0 
 len_txt_seq: ${data.max_txt_len} 

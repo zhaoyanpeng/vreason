@@ -3,6 +3,7 @@ from .slotattn_head import *
 from .dalle_head import *
 from .ipcfg_head import *
 from .gpt_head import * 
+from .mingpt_head import * 
 
 #DECODER_HEADS_REGISTRY.register(SlotCNNDecHead)
 #DECODER_HEADS_REGISTRY.register(NeoGPTDecHead)

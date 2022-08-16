@@ -1,0 +1,9 @@
+name: MiniGPTDecHead
+len_txt_seq: ${data.max_txt_len} 
+len_vis_seq: ${..vq.max_vis_len} 
+model_type: null
+n_layer: 12
+n_head: 16
+n_embd: 1024
+vocab_size: ${..vq.vocab_size}
+block_size: ${sum:${.len_txt_seq},${.len_vis_seq}}

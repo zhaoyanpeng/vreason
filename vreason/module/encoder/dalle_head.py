@@ -45,6 +45,7 @@ class DalleTokenEncHead(MetaEncHead):
             self.num_vis_token, self._emb_size, (H,) * 2,
             offset=self.vis_offset, tok_padding_idx=None, use_pos_padding=False,
         )
+        self.embed_dp = nn.Dropout(cfg.e_dropout)
 
     def _reset_parameters(self):
         pass
@@ -59,10 +60,10 @@ class DalleTokenEncHead(MetaEncHead):
 
     def _encode_positions(self, t=None, v=None):
         if t is not None:
-            t = self.txt_embed(t)
+            t = self.embed_dp(self.txt_embed(t))
         if v is not None:
             v = F.pad(v, (1, 0), value=self.vis_token_vocab.BOS_IDX) if self.is_bart else v
-            v = self.vis_embed(v)
+            v = self.embed_dp(self.vis_embed(v))
         return t, v
 
     def forward(self, t_seq, v_seq=None, **kwargs):
@@ -81,7 +82,12 @@ class DalleBartEncHead(MetaEncHead):
                 cfg.m_dim, cfg.num_head, cfg.f_dim, cfg.t_dropout, 
                 activation=cfg.activation, norm_first=cfg.norm_first
             )
-            self.encoder = TransformerEncoder(layer_fn, cfg.num_layer)
+            iln = oln = lambda x: x
+            if cfg.norm_first:
+                oln = nn.LayerNorm(cfg.m_dim)
+            else:
+                iln = nn.LayerNorm(cfg.m_dim)
+            self.encoder = TransformerEncoder(layer_fn, cfg.num_layer, iln=iln, oln=oln)
 
         self.stability = cfg.stability
 

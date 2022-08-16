@@ -46,6 +46,14 @@ class IGPT(Dalle):
         loss, outs, *_ = self.loss_head(logits, targets)
         self.set_stats(dec_extra, outs[-1])
 
+        v_peep_topk = kwargs.get("v_peep_topk", 0)
+        if v_peep_topk > 0 or v_peep_topk is None:
+            with torch.autocast("cuda", enabled=False): # has to be disabled when using cache at test time
+                extra_outs = self.peep_dp(
+                    text=text, image=image, text_mask=text_mask, analyze=analyze, device_ids=device_ids, **kwargs
+                )
+            outs[-1].update(extra_outs)
+
         if analyze:
             self.analyze(
                 t_emb=t_emb, v_emb=v_emb, t_seq=text, v_seq=v_seq, logits=logits, targets=targets,

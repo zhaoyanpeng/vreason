@@ -190,11 +190,15 @@ class TransformerEncoder(Module):
     """
     __constants__ = ['norm']
 
-    def __init__(self, encoder_layer, num_layers, norm=None):
+    def __init__(self, encoder_layer, num_layers, 
+        iln: Callable = lambda x: x,
+        oln: Callable = lambda x: x,
+    ):
         super(TransformerEncoder, self).__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
-        self.norm = norm
+        self.iln = iln
+        self.oln = oln
 
     def forward(self, src: Tensor, mask: Optional[Tensor] = None, src_key_padding_mask: Optional[Tensor] = None,
         caches=None, use_cache=False) -> Tensor:
@@ -209,7 +213,7 @@ class TransformerEncoder(Module):
             see the docs in Transformer class.
         """
         caches = {} if caches is None else caches 
-        output = src
+        output = self.iln(src)
         
         for i, mod in enumerate(self.layers):
             cache = caches.get(i, None)
@@ -218,8 +222,7 @@ class TransformerEncoder(Module):
             )
             caches[i] = cache
 
-        if self.norm is not None:
-            output = self.norm(output)
+        output = self.oln(output)
 
         return output, caches
 
@@ -241,11 +244,15 @@ class TransformerDecoder(Module):
     """
     __constants__ = ['norm']
 
-    def __init__(self, decoder_layer, num_layers, norm=None):
+    def __init__(self, decoder_layer, num_layers,
+        iln: Callable = lambda x: x,
+        oln: Callable = lambda x: x,
+    ):
         super(TransformerDecoder, self).__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
-        self.norm = norm
+        self.iln = iln
+        self.oln = oln
 
     def forward(self, tgt: Tensor, memory: Tensor, tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None, tgt_key_padding_mask: Optional[Tensor] = None,
@@ -264,7 +271,7 @@ class TransformerDecoder(Module):
             see the docs in Transformer class.
         """
         caches = {} if caches is None else caches 
-        output = tgt
+        output = self.iln(tgt)
 
         for i, mod in enumerate(self.layers):
             cache = caches.get(i, None)
@@ -274,8 +281,7 @@ class TransformerDecoder(Module):
                          memory_key_padding_mask=memory_key_padding_mask, cache=cache, use_cache=use_cache)
             caches[i] = cache
 
-        if self.norm is not None:
-            output = self.norm(output)
+        output = self.oln(output)
 
         return output, caches
 
@@ -387,10 +393,14 @@ class TransformerEncoderLayer(Module):
             k = x.shape[0] - cache[0].shape[0]
             x = x[-k:]
 
-        x, (_, sa_cache) = self.self_attn(x, x, x,
+        x, out = self.self_attn(x, x, x,
                            attn_mask=attn_mask,
                            key_padding_mask=key_padding_mask,
                            need_weights=False, cache=cache, use_cache=use_cache)
+        if out is not None:
+            (*_, sa_cache) = out
+        else:
+            sa_cache = () 
         return self.dropout1(x), sa_cache
 
     # feed forward block
@@ -537,10 +547,14 @@ class TransformerDecoderLayer(Module):
             k = x.shape[0] - cache[0].shape[0]
             x = x[-k:]
 
-        x, (_, sa_cache) = self.self_attn(x, x, x,
+        x, out = self.self_attn(x, x, x,
                            attn_mask=attn_mask,
                            key_padding_mask=key_padding_mask,
                            need_weights=False, cache=cache, use_cache=use_cache)
+        if out is not None:
+            (*_, sa_cache) = out
+        else:
+            sa_cache = () 
         return self.dropout1(x), sa_cache, k
 
     # multihead attention block
@@ -550,10 +564,14 @@ class TransformerDecoderLayer(Module):
             mem = mem[:0] # will be extracted from cache
             x = x[-k:]    # cannot infer step size inside mha 
 
-        x, (_, ma_cache) = self.multihead_attn(x, mem, mem,
+        x, out = self.multihead_attn(x, mem, mem,
                                 attn_mask=attn_mask,
                                 key_padding_mask=key_padding_mask,
                                 need_weights=False, cache=cache, use_cache=use_cache)
+        if out is not None:
+            (*_, ma_cache) = out
+        else:
+            ma_cache = () 
         return self.dropout2(x), ma_cache
 
     # feed forward block

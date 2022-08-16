@@ -131,7 +131,7 @@ def top_k_top_p_filtering(
     return logits
 
 def save_image_local(
-    root, names, prompts, images, nrow=-1, ncol=5, dpi=-1, margin=2,
+    root, names, prompts, images, labels=None, nrow=-1, ncol=5, dpi=-1, margin=2,
     color=(255,) * 3, mode="RGB", use_plt=False, font=None, font_size=12,
 ):
     assert len(names) == len(images), f"require one2one mapping between names and images."
@@ -167,7 +167,10 @@ def save_image_local(
                 irow = i // ncol
                 icol = i %  ncol
                 image = Image.fromarray(image)
-                panel.paste(image, (icol * ww, irow * hh))
+                x, y = (icol * ww, irow * hh)
+                panel.paste(image, (x, y))
+                if labels is not None: # each column has a unique label
+                    draw.text((x + 2 * margin, y + 2 * margin), labels[i], font=font)
             # draw text
             lines = textwrap.wrap(prompt, width=text_line_width)
             text_h = H * text_beg_height

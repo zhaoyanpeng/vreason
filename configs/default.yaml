@@ -2,6 +2,7 @@ alias_root: ""
 model_root: "" 
 alias_name: "test"
 model_name: "test"
+alias_odir: "outs"
 model_file: ""
 model_time:
 blockprint: False
