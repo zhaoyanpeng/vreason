@@ -19,7 +19,7 @@ from .raven_solver import Monitor as Meta
 from ..model import build_main_model
 from ..data import build_clevr_image_text_data
 
-from ..util import numel, shorten_name, save_image_local, ExpDecayLR, SlotattnLR
+from ..util import numel, shorten_name, save_image_local, is_main_process, get_rank
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 
 class Monitor(Meta):
@@ -44,7 +44,7 @@ class Monitor(Meta):
         self.dataloader, self.evalloader, self.testloader, \
         self.encoder_vocab, self.decoder_vocab, self.cate_vocab = \
         eval(f"build_{self.cfg.data.name.lower()}_image_text_data")(
-            self.cfg.data, not self.cfg.eval, self.echo
+            self.cfg.data, not self.cfg.eval, self.echo, ddp_mode=(self.cfg.mode == "ddp")
         )
 
     def make_batch(self, sample):
@@ -60,7 +60,7 @@ class Monitor(Meta):
         return {"image": image, "text": text, "text_mask": text_mask, "vfile": sample["vfile"]}
 
     def epoch(self, iepoch):
-        self.model.reset()
+        self.model_pointer.reset()
         all_time = defaultdict(list)
         self.timeit(all_time)        
         device_ids = [i for i in range(self.cfg.num_gpus)]
@@ -85,7 +85,6 @@ class Monitor(Meta):
             force_eval, warmup = self.pre_step(step, warmup_step_rate)
 
             self.timeit(all_time, key="data")
-            
 
             with torch.cuda.amp.autocast():
                 loss, (ntoken, ret_dict) = self.model(**batch_dict)
@@ -146,7 +145,7 @@ class Monitor(Meta):
         elif samples is None:
             samples = float("inf")
 
-        self.model.reset()
+        self.model_pointer.reset()
         losses, istep, nsample, nchunk, nbatch = 0, 0, 0, 1, len(dataloader)
         device_ids = [i for i in range(self.cfg.num_gpus)]
         if isinstance(self.model, DistributedDataParallel):
@@ -199,19 +198,18 @@ class Monitor(Meta):
                     f"{nsample / (time.time() - start_time):.2f} samples/s"
                 )
 
-        model = self.model.module if isinstance(self.model, DistributedDataParallel) else self.model
-        self.save_metric = model.eval_metric() #-losses / epoch_step
+        self.save_metric = self.model_pointer.eval_metric() #-losses / epoch_step
         self.echo(f"# sample {nsample}; metric {self.save_metric:.3f}; {nsample / (time.time() - start_time):.2f} samples/s")
-        stats = model.stats()
+        stats = self.model_pointer.stats()
         if stats != "": # could be empty
-            self.echo(f"EVAL STATS: {model.stats()}")
-        return model.report()
+            self.echo(f"EVAL STATS: {self.model_pointer.stats()}")
+        return self.model_pointer.report()
 
     def save_images(
         self, sampled, text=None, image=None, text_mask=None, vfile=None, outdir="", prefix="", **kwargs
     ):
-        if sampled is None or len(sampled) == 0:
-            return
+        if sampled is None or len(sampled) == 0 or not is_main_process():
+            return # FIXME only save on the master process
         labeled = [(k, v) for k, v in sampled.items() if k.startswith("_sample")]
         if len(labeled) <= 0:
             return

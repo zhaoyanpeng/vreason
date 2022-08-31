@@ -119,7 +119,7 @@ class MetaEmbedder(nn.Module):
     def __init__(self, embed_dim, offset=0, **kwargs):
         super().__init__()
         self.offset = offset # images may need an extra <BOS>
-        self.ext_embed = nn.Embedding(offset, embed_dim)
+        self.ext_embed = nn.Embedding(offset, embed_dim) if offset > 0 else None
 
     def offset_pos_embed(self, B, pos, device): 
         if self.offset > 0:

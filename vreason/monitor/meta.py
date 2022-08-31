@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-from ..util import numel
+from ..util import numel, is_main_process, get_rank
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 
 class Monitor(object):
@@ -62,7 +62,7 @@ class Monitor(object):
 
     def timeit(self, time_dict, key=None, show=False):
         if self.cfg.rank != 0:
-            return 
+            pass #return 
         if show: # print
             report = ""
             for k, v in time_dict.items():
@@ -111,8 +111,8 @@ class Monitor(object):
                 force_eval = self.scheduler.get_last_lr() == self.scheduler.base_lrs
             #self.echo(f"do step lr {old_lrs}")
 
-        if force_eval or (self.cfg.rank == 0 and epoch_step % self.cfg.running.peep_rate == 0):
-            msg = self.model.stats()
+        if force_eval or (self.cfg.rank >= 0 and epoch_step % self.cfg.running.peep_rate == 0):
+            msg = self.model_pointer.stats()
             if msg != "":
                 #self.echo(msg)
                 msg = f"{msg} "
@@ -142,9 +142,9 @@ class Monitor(object):
                 self.model.train(True)
             if report != "":
                 self.echo(f"{report}")
-            if (self.cfg.rank == 0 and not self.cfg.running.skip_save) or (
+            if self.cfg.rank == 0 and (not self.cfg.running.skip_save or (
                     self.cfg.running.save_last and self.cfg.running.epochs == iepoch + 1
-                ):
+                )):
                 self.save()
 
         # global across epochs 
@@ -172,6 +172,7 @@ class Monitor(object):
         pass
 
     def save(self, metric=-float("inf")):
+        if not is_main_process(): return # save on master
         def update_kbest_cache(kbest_cache, metric, ckpt):
             save = False
             for split, (old_metric, _) in enumerate(kbest_cache):

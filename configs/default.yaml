@@ -6,6 +6,7 @@ alias_odir: "outs"
 model_file: ""
 model_time:
 blockprint: False
+purge_root: False
 monitor: Monitor
 worker: VQGAN 
 verbose: False

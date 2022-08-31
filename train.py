@@ -34,17 +34,17 @@ def _distributed_worker(local_rank, main_func, cfg, ddp):
     torch.cuda.set_device(local_rank)
     pg = dist.new_group(range(cfg.num_gpus))
     device = torch.device('cuda', local_rank)
-    main_func(cfg, local_rank, ddp, pg, device, DDPMonitor)
+    main_func(cfg, local_rank, ddp, pg, device, cfg.monitor)
 
 
 def main(cfg, rank, ddp, pg, device, manager):
     cfg.rank = rank
-    seed_all_rng(cfg.seed) # + rank)
+    seed_all_rng(cfg.seed + rank)
     
     fname = "eval" if cfg.eval else "train"
     output_dir = f"{cfg.alias_root}/{cfg.alias_name}"
     logger = setup_logger(
-        output_dir=output_dir, rank=rank, output=output_dir, fname=fname
+        output_dir=output_dir, rank=rank, output=output_dir, fname=fname, purge=cfg.purge_root
     )
     
     if cfg.verbose or not cfg.eval:

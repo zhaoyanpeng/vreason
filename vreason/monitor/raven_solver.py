@@ -37,6 +37,9 @@ class Monitor(Meta):
             model, device_ids=[cfg.rank], find_unused_parameters=True
         ) if torch.distributed.is_initialized() else model 
         self.model.train(not cfg.eval)
+        self.model_pointer = (self.model.module
+            if isinstance(self.model, DistributedDataParallel) else self.model
+        )
         self.build_optimizer(tunable_params)
 
     def show_batch(self, batch):

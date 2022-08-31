@@ -6,6 +6,7 @@ from .dalle import Dalle
 from .ipcfg import IPCFG 
 from .igpt import IGPT 
 from .mingpt import MinIGPT
+from .dalle_ddp import DalleDDP
 
 from fvcore.common.registry import Registry
 
@@ -25,3 +26,4 @@ VQ_MODELS_REGISTRY.register(Dalle)
 VQ_MODELS_REGISTRY.register(IPCFG)
 VQ_MODELS_REGISTRY.register(IGPT)
 VQ_MODELS_REGISTRY.register(MinIGPT)
+VQ_MODELS_REGISTRY.register(DalleDDP)

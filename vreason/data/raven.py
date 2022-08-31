@@ -9,7 +9,7 @@ except Exception as e:
     RavenBase = RavenData = RavenVQGAN = object 
 
 from . import DatasetCatalog, register_indexer
-from ..util import shorten_name 
+from ..util import shorten_name, get_world_size
 
 class RavenVQEncData(RavenVQGAN):
     def __init__(self, paths, size=None, random_crop=False, labels=None):
@@ -98,19 +98,28 @@ class SeqRavenCollator:
         }
         return self._naive_collator(union)
 
-def build_dataloader(cfg, dataset, train, collate_fn, echo, msg="", pin_memory=True):
-    if not train: 
-        sampler = torch.utils.data.SequentialSampler(dataset)
+def build_dataloader(cfg, dataset, train, collate_fn, echo, msg="", pin_memory=True, ddp_mode=False):
+    if ddp_mode:
+        world_size = get_world_size()
+        assert cfg.batch_size % world_size == 0, (
+            f"batch size ({cfg.batch_size}) cannot be divided by # device ({world_size})."
+        )
+        sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=train)
+        per_device_batch_size = cfg.batch_size // world_size
     else:
-        sampler = torch.utils.data.RandomSampler(dataset) 
+        sampler = (torch.utils.data.RandomSampler(dataset)
+            if train else torch.utils.data.SequentialSampler(dataset)
+        )
+        per_device_batch_size = cfg.batch_size
     data_loader = torch.utils.data.DataLoader(
         dataset=dataset, 
-        batch_size=cfg.batch_size, 
+        batch_size=per_device_batch_size,
         num_workers=cfg.num_proc,
         shuffle=False,
         sampler=sampler,
         pin_memory=pin_memory, 
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        drop_last=(True if ddp_mode else False)
     )
     echo(f"Load {len(data_loader)} ({len(dataset)}) batches ({msg}).")
     return data_loader

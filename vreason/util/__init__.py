@@ -1,10 +1,12 @@
 import os, sys
 import logging
 import random
+import shutil
 import numpy
 import torch
 import torch.distributed as dist
 
+from .misc import *
 from .module import * 
 from .function import *
 
@@ -13,7 +15,7 @@ def seed_all_rng(seed):
     numpy.random.seed(seed)
     torch.manual_seed(seed)
 
-def setup_logger(output_dir=None, name="pcfg", rank=0, output=None, fname="train"):
+def setup_logger(output_dir=None, name="pcfg", rank=0, output=None, fname="train", purge=False):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     logger.propagate = False
@@ -25,6 +27,12 @@ def setup_logger(output_dir=None, name="pcfg", rank=0, output=None, fname="train
         logger.addHandler(console)
     if os.path.exists(output_dir):
         logger.info(f'Warning: the folder {output_dir} exists.')
+        if rank == 0 and purge:
+            try: # clear an existing path
+                shutil.rmtree(output_dir)
+                os.makedirs(output_dir)
+            except OSError as e:
+                logger.info(f"{e.filename} - {e.strerror}")
     else:
         logger.info(f'Creating {output_dir}')
         if rank == 0: 

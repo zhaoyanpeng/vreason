@@ -170,7 +170,7 @@ class ClevrImageTextCollator:
         }
         return self._naive_collator(union)
 
-def build_clevr_image_text_data(cfg, train, echo):
+def build_clevr_image_text_data(cfg, train, echo, ddp_mode=False):
     encoder_vocab = decoder_vocab = cate_vocab = None 
     dataloader = evalloader = testloader = None
     try:
@@ -240,7 +240,7 @@ def build_clevr_image_text_data(cfg, train, echo):
         cate_vocab=cate_vocab, train=train, chunk=chunk
     )
     dataloader = build_dataloader(
-        cfg, dataset, train, ClevrImageTextCollator(), echo, msg=f"main", pin_memory=pin_memory
+        cfg, dataset, train, ClevrImageTextCollator(), echo, msg=f"main", pin_memory=pin_memory, ddp_mode=ddp_mode
     )
 
     # eval
@@ -254,7 +254,7 @@ def build_clevr_image_text_data(cfg, train, echo):
             cate_vocab=cate_vocab, train=False, chunk=chunk
         )
         evalloader = build_dataloader(
-            cfg, dataset, False, ClevrImageTextCollator(), echo, msg=f"eval", pin_memory=pin_memory
+            cfg, dataset, False, ClevrImageTextCollator(), echo, msg=f"eval", pin_memory=pin_memory, ddp_mode=ddp_mode
         )
 
     # test
@@ -268,6 +268,6 @@ def build_clevr_image_text_data(cfg, train, echo):
             cate_vocab=cate_vocab, train=False, chunk=chunk
         )
         testloader = build_dataloader(
-            cfg, dataset, False, ClevrImageTextCollator(), echo, msg=f"test", pin_memory=pin_memory
+            cfg, dataset, False, ClevrImageTextCollator(), echo, msg=f"test", pin_memory=pin_memory, ddp_mode=ddp_mode
         )
     return dataloader, evalloader, testloader, encoder_vocab, decoder_vocab, cate_vocab

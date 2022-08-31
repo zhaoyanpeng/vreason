@@ -7,6 +7,7 @@ from torch import nn, Tensor
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pad_sequence
 
+import matplotlib.font_manager
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 plt.rcParams["savefig.bbox"] = 'tight'
@@ -147,6 +148,9 @@ def save_image_local(
     if not use_plt:
         font = font or "Lato-Thin.ttf"
         assert True or os.path.isfile(font), f"please specify a font file."
+        # https://stackoverflow.com/a/27564040
+        font = matplotlib.font_manager.FontProperties(family='lato:thin')
+        font = matplotlib.font_manager.findfont(font)
         font = ImageFont.truetype(font, font_size)
         
         text_line_width = 50

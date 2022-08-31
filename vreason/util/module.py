@@ -5,7 +5,9 @@ import warnings
 from collections import defaultdict, namedtuple
 
 import torch.nn.functional as F
+import torch.distributed as dist
 from torch.optim.lr_scheduler import StepLR
+from . import is_dist_avail_and_initialized, reduce_dict
 
 class ExpDecayLR(StepLR):
     def __init__(self, optimizer, step_size, gamma=0.5, last_epoch=-1, verbose=False, **kwargs):
@@ -51,15 +53,22 @@ class Stats(object):
 
     def reset(self):
         self._stats = defaultdict(float)
+        if is_dist_avail_and_initialized():
+            dist.barrier() # the same initial status
 
     @property
     def stats(self):
-        return self._stats
+        if not is_dist_avail_and_initialized():
+            return self._stats
+        dist.barrier() # the same intermediate status
+        return reduce_dict(self._stats, average=False)
 
     def __call__(self, **kwargs):
         for k, v in kwargs.items():
             if isinstance(v, torch.Tensor):
-                v = v.detach().cpu()
+                v = v.detach().cuda() # TODO cuda is available
+            if isinstance(v, (float, int, bool)):
+                v = torch.tensor(v).cuda() # TODO cuda is available
             self._stats[k] += v
 
 class AverageMeter(object):

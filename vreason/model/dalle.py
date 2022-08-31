@@ -10,11 +10,8 @@ import torch.nn.functional as F
 from torch.nn.parallel import data_parallel
 
 from . import from_pretrained_vqgan, load_checkpoint, MetaSolver
-from ..util import Stats, enable_print, disable_print, top_k_top_p_filtering
+from ..util import Stats, enable_print, disable_print, top_k_top_p_filtering, get_world_size, get_rank
 from ..module import build_encoder_head, build_decoder_head, build_loss_head
-
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from torch.nn import TransformerDecoder, TransformerDecoderLayer
 
 
 class Dalle(MetaSolver):
@@ -307,12 +304,13 @@ class Dalle(MetaSolver):
         return outs
 
     def stats(self): 
+        world_size = 1 #get_world_size()
         meter = self.meter_train if self.training else self.meter_infer
         stats = meter.stats
 
         if stats.get("couple", False):
             nstep = stats["nstep"]
-            alpha = 1 / nstep if nstep > 0 else 0
+            alpha = world_size / nstep if nstep > 0 else 0
             t_loss = stats["t_main_loss"] * alpha 
             v_loss = stats["v_main_loss"] * alpha 
             info = f"t_loss {t_loss:.5f} v_loss {v_loss:.5f} "
@@ -337,7 +335,7 @@ class Dalle(MetaSolver):
             info += f"t_ppl {t_ppl:.3f} v_ppl {v_ppl:.3f} t_acc {t_acc:.3f} v_acc {v_acc:.3f} acc {acc:.3f}"
         else:
             nstep = stats["nstep"]
-            alpha = 1 / nstep if nstep > 0 else 0
+            alpha = world_size / nstep if nstep > 0 else 0
             loss = stats["main_loss"] * alpha 
 
             ntoken = stats["ntoken"]

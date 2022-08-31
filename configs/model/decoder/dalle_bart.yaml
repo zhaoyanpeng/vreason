@@ -1,6 +1,6 @@
 name: DalleBartDecHead
 m_dim: 1024 
-f_dim: 2048 
+f_dim: 4096 
 num_head: 16 
 num_layer: 12 
 t_dropout: 0.1
@@ -11,6 +11,6 @@ max_dec_len: ${.len_vis_seq}
 beg_dec_len: 0
 block_size: ${sum:1,${.len_vis_seq}}
 contx_size: ${.block_size}
-norm_first: True
+norm_first: false 
 activation: gelu
 infer_mode: ll
