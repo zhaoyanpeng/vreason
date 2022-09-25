@@ -29,8 +29,23 @@ class Monitor(Meta):
         topk = cfg.running.topk_best
         self.kbest_cache = [(-float("inf"), None)] * topk if topk > 1 else None 
 
+        # encode data for dalle-mini; add this param from bash
+        if getattr(self.cfg.data, "encode_for_dalle_mini", False):
+            self.encode_data_for_dalle_mini(
+                self.dataloader, samples=self.cfg.data.eval_samples
+            )
+            self.dataloader = None # will skip eval
+    
     def show_batch(self, batch):
-        pass
+        lens = (batch["text"] != self.encoder_vocab.PAD_IDX).sum(-1)
+        text = batch["text"].tolist()
+        
+        for txt, l, vf in zip(text, lens, batch["vfile"]):
+            txt = self.encoder_vocab(txt)[:l]
+            txt = " ".join(txt)
+            print(vf)
+            print(txt)
+        print(batch["image"].shape)
 
     def step(self, loss=None, **kwargs):
         if self.cfg.optimizer.max_gnorm is not None:
@@ -50,7 +65,8 @@ class Monitor(Meta):
     def make_batch(self, sample):
         image = sample["image"]
         image = torch.from_numpy(image).to(self.device)
-        image = image.permute(0, 3, 1, 2)
+        if len(image.shape) == 4: # can be pre-encoded image token sequences
+            image = image.permute(0, 3, 1, 2)
 
         text = sample["text"]
         text = torch.from_numpy(text).to(self.device)
@@ -72,7 +88,7 @@ class Monitor(Meta):
         def do_batch(batch, step):
             epoch_step = step #% len(self.dataloader)
 
-            #self.show_batch(batch, meta)
+            #self.show_batch(batch)
 
             batch_dict = self.make_batch(batch) 
             batch_dict["device_ids"] = device_ids
@@ -138,6 +154,7 @@ class Monitor(Meta):
         return ""
 
     def main_eval(self, dataloader, samples=float("inf"), iepoch=0):
+        if dataloader is None or len(dataloader) < 1: return "None eval data."
 
         if isinstance(samples, (tuple, list, ListConfig)): 
             samples = list(samples)
@@ -236,6 +253,97 @@ class Monitor(Meta):
             [x[..., None] for x in all_images], axis=-1
         )
         # TODO try ... except ...
-        fnames = [prefix + fname.rsplit("/", 1)[1].rsplit(".", 1)[0] for fname in vfile]
+        fnames = [prefix + fname.rsplit("/", 1)[-1].rsplit(".", 1)[0] for fname in vfile]
         root = f"{self.cfg.alias_root}/{self.cfg.alias_name}/{outdir}"
         save_image_local(root, fnames, prompts, all_images, labels=all_labels)
+
+    @torch.no_grad()
+    def encode_data_for_dalle_mini(self, dataloader, samples=float("inf"), iepoch=0):
+        if isinstance(samples, (tuple, list, ListConfig)): 
+            samples = list(samples)
+            samples = samples[1] - samples[0]
+        elif samples is None:
+            samples = float("inf")
+        self.model_pointer.reset()
+        istep, nsample, nchunk, nbatch = 0, 0, 1, len(dataloader)
+        device_ids = [i for i in range(self.cfg.num_gpus)]
+        if isinstance(self.model, DistributedDataParallel):
+            dataloader.sampler.set_epoch(iepoch)
+            nchunk = self.cfg.num_gpus
+
+        import pandas as pd
+        from pathlib import Path
+        
+        # output configs
+        dcfg = self.cfg.data
+        vcfg = self.cfg.model.vq
+        split = getattr(dcfg, "split", "") # data splits
+        data_name = dcfg.data_root.rsplit("/", 1)[-1]
+        model_file = vcfg.model_file.rsplit(".", 1)[0]
+        model_name = f"{vcfg.model_time}_{vcfg.model_name}"
+        output_dir = f"{dcfg.dump_root}/{model_name}/{model_file}/{data_name}/{split}"
+        self.echo(f"Being saved to {output_dir}")
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        all_captions = []
+        all_encoding = []
+        all_obj_nums = []
+        all_images = []
+        n_file = 1
+
+        def make_batch(sample, device):
+            image = sample["image"]
+            image = torch.from_numpy(image).to(device)
+            image = image.permute(0, 3, 1, 2)
+
+            vfile = [vpath.rsplit("/", 1)[-1] for vpath in sample["vfile"]]
+            return {"image": image, "text": sample["text"], "vfile": vfile, "num_obj": sample["num_obj"]}
+
+        peep_rate = self.cfg.running.peep_rate #max(10, (len(dataloader) // 10))
+        epoch_step = total_word = 0
+        start_time = time.time()
+        for ibatch, batch in enumerate(dataloader):
+            if nsample >= samples: break
+
+            #self.show_batch(batch)
+
+            batch_dict = make_batch(batch, self.device)
+            batch_dict["device_ids"] = device_ids
+
+            bsize = batch_dict["image"].shape[0]
+
+            *_, (codes, *_) = self.model(**batch_dict)
+
+            encoding = codes.cpu().tolist()
+            all_captions.extend(batch_dict["text"])
+            all_encoding.extend(encoding)
+            all_obj_nums.extend(batch_dict["num_obj"])
+            all_images.extend(batch_dict["vfile"])
+
+            epoch_step += 1
+            nsample += bsize * nchunk
+            if self.cfg.rank == 0 and (ibatch + 1) % peep_rate == 0:
+                self.echo(
+                    f"step {istep} / {ibatch}\t" + #gnorm {grad_norm():.2f} " +
+                    f"{nsample / (time.time() - start_time):.2f} samples/s"
+                )
+                # save files
+                self.echo(f"Saving file {n_file}")
+                batch_df = pd.DataFrame.from_dict(
+                    {"caption": all_captions, "encoding": all_encoding, "image": all_images, "object_num": all_obj_nums}
+                )
+                batch_df.to_parquet(f"{output_dir}/{n_file:03d}.parquet")
+                all_captions = []
+                all_encoding = []
+                all_obj_nums = []
+                all_images = []
+                n_file += 1
+           
+        if len(all_captions):
+            self.echo(f"Saving final file {n_file}")
+            batch_df = pd.DataFrame.from_dict(
+                {"caption": all_captions, "encoding": all_encoding, "image": all_images, "object_num": all_obj_nums}
+            )
+            batch_df.to_parquet(f"{output_dir}/{n_file:03d}.parquet")

@@ -35,7 +35,7 @@ class DalleDDP(Dalle):
         return logits, targets, enc_cache, dec_cache, enc_extra, dec_extra
 
     def forward(self, text=None, image=None, text_mask=None, analyze=False, device_ids=[0], **kwargs):
-        v_seq = self.tokenize_images(image) # discretize images 
+        v_seq = self.tokenize_images(image) if image.dim() == 4 else image # discretize images 
         t_emb, v_emb, emb_extra = self.embedder_head(text, v_seq=v_seq)
 
         logits, targets, *_, enc_extra, dec_extra = self._seq2seq(
@@ -88,7 +88,7 @@ class DalleDDP(Dalle):
     ):
         text = text[:v_peep_topk]
         image = image[:v_peep_topk]
-        v_seq = self.tokenize_images(image) # discretize images 
+        v_seq = self.tokenize_images(image) if image.dim() == 4 else image# discretize images 
 
         B, L = v_seq.shape[:2]
 

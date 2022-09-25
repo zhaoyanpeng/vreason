@@ -5,6 +5,8 @@ import numpy as np
 import itertools
 from PIL import Image
 import albumentations
+import pandas as pd
+from braceexpand import braceexpand
 from omegaconf.listconfig import ListConfig
 
 import torchvision.transforms as T
@@ -38,27 +40,54 @@ class ClevrImageTextData(torch.utils.data.Dataset):
         ])
 
         self.max_txt_len = cfg.max_txt_len
-        self.num_txt_sample = cfg.num_txt_sample
+        self.max_txt_num = cfg.max_txt_num
+        self.min_txt_num = cfg.min_txt_num
 
-        # load (a subset of) data
-        self.dataset = list()
-        keyset = set(list(range(chunk[0], chunk[1]))) if chunk is not None else None
-        txt_data = json.load(open(data_file, "r"))["captions"]
+        split_name = "train" if self.train else "val"
+        scene_file = f"{cfg.more_root}/scenes/CLEVR_{split_name}_scenes.all.json"
+        if not os.path.isfile(scene_file):
+            txt_data = json.load(open(data_file, "r"))["captions"]
+            all_keys = list({int(k) for k, _ in txt_data.items()})
+        else: # collect keys from the scene data
+            min_obj_num = max(cfg.min_obj_num, 1)
+            max_obj_num = min(cfg.max_obj_num, 10)
+            scene_data = json.load(open(scene_file, "r"))
+            all_keys = list({
+                int(k) for k, scene in scene_data["scenes"].items()
+                if (
+                    len(scene["objects"]) <= max_obj_num and
+                    len(scene["objects"]) >= min_obj_num
+                )
+            })
+            txt_data = json.load(open(data_file, "r"))["captions"]
+        
+        local_seed = 8080
+        keyset = all_keys
+        # select (a subset of) data keys
+        if chunk is not None:
+            np.random.default_rng(local_seed).shuffle(all_keys)
+            slicer = slice(chunk[0], chunk[1])
+            keyset = set(all_keys[slicer])
+
         iskip = jskip = 0
-        if keyset is not None:
-            for key in keyset:
-                key = str(key)
-                if key in txt_data:
-                    self.dataset.append((int(key), txt_data[key])) 
-                else:
-                    iskip += 1
-        else:
-            self.dataset = [(int(key), captions) for key, captions in txt_data.items()]
+        self.dataset = list()
+        # load (a subset of) data samples
+        for key in keyset:
+            key = str(key)
+            if key in txt_data:
+                self.dataset.append((int(key), txt_data[key])) 
+            else:
+                self.dataset.append((int(key), [])) 
+                iskip += 1
         #print(iskip, jskip, len(scenes), len(keyset) if keyset is not None else 0)
         
-        # load only image indice
         self.length = len(self.dataset)
         self.version = cfg.version
+        # oops, better do all here but ...
+        self._additional_init(cfg, data_file=data_file)
+
+    def _additional_init(self, cfg, **kwargs):
+        pass
 
     def __len__(self):
         return self.length
@@ -74,18 +103,22 @@ class ClevrImageTextData(torch.utils.data.Dataset):
         image = (image / 127.5 - 1.0).astype(np.float32)
         return image, None, vfile
 
-    def preprocess_text(self, captions):
-        num_caption = len(captions)
-        num_txt_sample = num_caption if num_caption < self.num_txt_sample else self.num_txt_sample
-        if self.train: # sample a number & sample a number of text
-            num = 1 if num_txt_sample == 1 else np.random.choice(range(1, num_txt_sample + 1), 1)[0]
-            caption_indice = np.random.choice(num_caption, num, replace=False)
+    def preprocess_text(self, captions): 
+        if self.train:
+            num_caption = len(captions)
+            if self.max_txt_num >= num_caption:
+                selected = captions
+            else: # sample a number & sample a number of text
+                assert self.min_txt_num < self.max_txt_num + 1, f"{self.min_txt_num} < {self.max_txt_num} + 1"
+                k = np.random.choice(range(self.min_txt_num, self.max_txt_num + 1), 1)[0]
+                selected = np.random.choice(captions, k, replace=False)
         else: # use a single caption at test time
-            caption_indice = [0]
+            #k = (self.min_txt_num + self.max_txt_num) // 2
+            selected = captions #[:k] #self.min_txt_num]
 
-        selected = " ".join([captions[i] for i in caption_indice])
+        selected = " ".join(selected)
 
-        caption = [self.encoder_vocab.BOS] + selected.lower().split(" ")
+        caption = [self.encoder_vocab.BOS] + selected.lower().split() #" ")
         caption = self.encoder_vocab(caption)
         caption = caption + [self.encoder_vocab.PAD_IDX] * (self.max_txt_len - len(caption))
         caption = caption[:self.max_txt_len] # truncate whatever
@@ -150,6 +183,121 @@ class ClevrImageData(ClevrImageTextData):
             "vfile": vfile,
         }
 
+class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
+    def __init__(
+        self, cfg, data_file, image_path, decoder_vocab=None,
+        encoder_vocab=None, cate_vocab=None, train=True, chunk=None, #slice(0, None)
+    ):
+        # the dataset is provided as a whole, we have to split it into train, val, and test sets.
+        self.decoder_vocab = decoder_vocab
+        self.encoder_vocab = encoder_vocab
+        self.train = train
+
+        self.max_txt_len = cfg.max_txt_len
+        self.max_txt_num = cfg.max_txt_num
+        self.min_txt_num = cfg.min_txt_num
+        
+        # read
+        all_df = list()
+        for dfile in braceexpand(data_file):
+            df = pd.read_parquet(dfile)
+            all_df.append(df)
+        all_df = pd.concat(all_df)
+        
+        # filter
+        min_obj_num = max(cfg.min_obj_num, 1)
+        max_obj_num = min(cfg.max_obj_num, 10)
+        all_df = all_df[(all_df['object_num'] >= min_obj_num) & (all_df['object_num'] <= max_obj_num)]
+
+        # select
+        if chunk is not None:
+            slicer = slice(chunk[0], chunk[1])
+            all_df = all_df[slicer]
+
+
+        self.dataset = all_df
+        self.length = len(self.dataset)
+        self.version = cfg.version
+        # oops, better do all here but ...
+        self._additional_init(cfg, data_file=data_file)
+
+    def _additional_init(self, cfg, **kwargs):
+        pass
+
+    def __len__(self):
+        return self.length
+
+    def preprocess_image(self, sample=None, index=-1, mode="RGB"):
+        codes = np.array(sample.encoding)
+        vfile = sample.image
+        return codes, None, vfile
+        
+    def preprocess_text(self, captions): 
+        if self.train:
+            num_caption = len(captions)
+            if self.max_txt_num >= num_caption:
+                selected = captions
+            else: # sample a number & sample a number of text
+                assert self.min_txt_num < self.max_txt_num + 1, f"{self.min_txt_num} < {self.max_txt_num} + 1"
+                k = np.random.choice(range(self.min_txt_num, self.max_txt_num + 1), 1)[0]
+                selected = np.random.choice(captions, k, replace=False)
+        else: # use a single caption at test time
+            #k = (self.min_txt_num + self.max_txt_num) // 2
+            selected = captions #[:k] #self.min_txt_num]
+        
+        selected = " ".join(selected)
+
+        caption = [self.encoder_vocab.BOS] + selected.lower().split() #" ")
+        caption = self.encoder_vocab(caption)
+        caption = caption + [self.encoder_vocab.PAD_IDX] * (self.max_txt_len - len(caption))
+        caption = caption[:self.max_txt_len] # truncate whatever
+        return caption
+
+    def __getitem__(self, index):
+        sep = " SEP " # special symbol
+        row = self.dataset.iloc[index]
+        caption = self.preprocess_text(row.caption.split(" SEP "))
+        image, _, vfile = self.preprocess_image(sample=row)
+        return {
+            "text": caption,
+            "image": image, 
+            "vfile": vfile,
+        }
+
+class ClevrImageTextDataForDalleMini(ClevrImageTextData):
+    def _additional_init(self, cfg, data_file=None):
+        scene_file = f"{cfg.more_root}/scenes/CLEVR_{cfg.split}_scenes.all.json"
+        
+        assert os.path.isfile(scene_file), f"scene file `{scene_file}` does not exist."
+        scene_data = json.load(open(scene_file, "r"))
+        
+        assert os.path.isfile(data_file), f"caption file `{data_file}` does not exist."
+        txt_data = json.load(open(data_file, "r"))["captions"]
+
+        self.dataset = [
+            (int(k), txt_data[k], len(scene["objects"]))
+            if k in txt_data else
+            (int(k), [], len(scene["objects"]))
+            for k, scene in scene_data["scenes"].items()
+        ]
+
+        local_seed = 1213 
+        np.random.default_rng(local_seed).shuffle(self.dataset)
+        self.length = len(self.dataset)
+
+    def __getitem__(self, index):
+        sep = " SEP " # special symbol
+        index, captions, num_obj = self.dataset[index]
+        caption = sep.join(captions)
+
+        image, _, vfile = self.preprocess_image(index=index)
+        return {
+            "text": caption,
+            "image": image, 
+            "vfile": vfile,
+            "num_obj": num_obj,
+        }
+
 class ClevrImageTextCollator:
     def __init__(self, device=torch.device("cpu"), vocab=None):
         self.device = device
@@ -158,11 +306,12 @@ class ClevrImageTextCollator:
     def _naive_collator(self, union):
         text = np.stack(union["text"], axis=0)
         image = np.stack(union["image"], axis=0) 
-        return {
+        new_items = {
             "text": text,
             "image": image,
-            "vfile": union["vfile"],
         }
+        union.update(new_items)
+        return union
 
     def __call__(self, records):
         union = { 
@@ -208,12 +357,17 @@ def build_clevr_image_text_data(cfg, train, echo, ddp_mode=False):
     
 
     def get_image_path(data_file):
-        data_file = os.path.basename(data_file)
-        if "train" in data_file:
+        #data_file = os.path.basename(data_file)
+        data_file = data_file.rsplit("/", 2)[-2:]
+        if len(data_file) > 1:
+            split, data_file, *_ = data_file
+        else:
+            split = ""
+        if "train" in data_file or "train" in split:
             name = "/images/train/CLEVR_train_{:06}.png"
-        elif "test" in data_file:
+        elif "test" in data_file or "test" in split:
             name = "/images/test/CLEVR_test_{:06}.png"
-        elif "val" in data_file:
+        elif "val" in data_file or "val" in split:
             name = "/images/val/CLEVR_val_{:06}.png"
         else:
             raise ValueError(f"cannot figure out data split: {data_file}")
@@ -226,12 +380,14 @@ def build_clevr_image_text_data(cfg, train, echo, ddp_mode=False):
 
     pin_memory = False
     dataset_cls = ClevrImageData if cfg.vis_only else ClevrImageTextData
+    dataset_cls = ClevrImageTextDataForDalleMini if getattr(cfg, "encode_for_dalle_mini", False) else dataset_cls
+    dataset_cls = ClevrImageTextPandasForDalleMini if getattr(cfg, "use_preencoded_pandas", False) else dataset_cls
 
     # train
     name = cfg.data_name if train else cfg.eval_name
     ifile = f"{cfg.data_root}/{name}" # txt file
     skip = name is None or name == "" # not required when using only images
-    assert (os.path.isfile(ifile) or cfg.vis_only) and not skip, f"not a data file {ifile}"
+    assert (os.path.isfile(ifile) or cfg.vis_only or ifile.endswith(".parquet")) and not skip, f"not a data file {ifile}"
     image_path = get_image_path(ifile)
     chunk = cfg.train_samples if train else cfg.eval_samples
     chunk = get_sample_chunk(chunk)
@@ -246,7 +402,7 @@ def build_clevr_image_text_data(cfg, train, echo, ddp_mode=False):
     # eval
     skip = not train or cfg.eval_name is None or cfg.eval_name == ""
     ifile = f"{cfg.data_root}/{cfg.eval_name}" if train else "IGNORE_ME"
-    if (os.path.isfile(ifile) or cfg.vis_only) and not skip:
+    if (os.path.isfile(ifile) or cfg.vis_only or ifile.endswith(".parquet")) and not skip:
         image_path = get_image_path(ifile)
         chunk = get_sample_chunk(cfg.eval_samples)
         dataset = dataset_cls(
@@ -260,7 +416,7 @@ def build_clevr_image_text_data(cfg, train, echo, ddp_mode=False):
     # test
     skip = not train or cfg.test_name is None or cfg.test_name == ""
     ifile = f"{cfg.data_root}/{cfg.test_name}" if train else "IGNORE_ME"
-    if (os.path.isfile(ifile) or cfg.vis_only) and not skip:
+    if (os.path.isfile(ifile) or cfg.vis_only or ifile.endswith(".parquet")) and not skip:
         image_path = get_image_path(ifile)
         chunk = get_sample_chunk(cfg.test_samples)
         dataset = dataset_cls(

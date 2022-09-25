@@ -110,8 +110,10 @@ class Monitor(object):
             if isinstance(self.scheduler, (CosineAnnealingWarmRestarts,)):
                 force_eval = self.scheduler.get_last_lr() == self.scheduler.base_lrs
             #self.echo(f"do step lr {old_lrs}")
+        
+        num_step = epoch_step if len(self.dataloader) > self.cfg.running.peep_rate else self.total_step
 
-        if force_eval or (self.cfg.rank >= 0 and epoch_step % self.cfg.running.peep_rate == 0):
+        if force_eval or (self.cfg.rank >= 0 and num_step % self.cfg.running.peep_rate == 0):
             msg = self.model_pointer.stats()
             if msg != "":
                 #self.echo(msg)
@@ -130,7 +132,12 @@ class Monitor(object):
 
         ppl_criteria = -1
         if force_eval or self.total_step % self.cfg.running.save_rate == 0 or (
-                self.cfg.running.save_epoch and epoch_step % len(self.dataloader) == 0
+                self.cfg.running.save_epoch and 
+                epoch_step % len(self.dataloader) == 0
+            ) or ( # save by rate and save after the last step of the last epoch
+                self.cfg.running.save_last and 
+                self.cfg.running.epochs == iepoch + 1 and 
+                epoch_step % len(self.dataloader) == 0
             ): # distributed eval
             report = ""
             if self.evalloader is not None:
@@ -142,9 +149,7 @@ class Monitor(object):
                 self.model.train(True)
             if report != "":
                 self.echo(f"{report}")
-            if self.cfg.rank == 0 and (not self.cfg.running.skip_save or (
-                    self.cfg.running.save_last and self.cfg.running.epochs == iepoch + 1
-                )):
+            if self.cfg.rank == 0 and not self.cfg.running.skip_save:
                 self.save()
 
         # global across epochs 
