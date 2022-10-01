@@ -55,15 +55,6 @@ class IPCFGDecHead(MetaDecHead):
     def kl(mean, lvar):
         return -0.5 * (lvar - torch.pow(mean, 2) - torch.exp(lvar) + 1)
 
-    def _build_z_encoder(self, cfg, vocab_size):
-        if self.z_dim <= 0: return
-        # TODO switch to a desired encoding method
-        i_dim = self._build_embedder_from_default(cfg, vocab_size)
-        self.enc_out = nn.Linear(i_dim, self.z_dim * 2)
-
-    def _build_embedder_from_default(self, cfg, vocab_size):
-        raise NotImplemented
-
 @DECODER_HEADS_REGISTRY.register()
 class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
     def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
@@ -109,54 +100,15 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
             nn.Linear(s_dim, V)
         )
         self.term_mlp = nn.Sequential(*term_modules)
-        
-        self._build_z_encoder(cfg, V)
 
         self._count_rnd_consumed()
         self._reset_parameters()
 
-    def _build_embedder_from_default(self, cfg, vocab_size):
-        self.enc_emb = nn.Embedding(vocab_size, cfg.w_dim)
-        self.enc_rnn = nn.LSTM(
-            cfg.w_dim, cfg.h_dim, bidirectional=True, num_layers=1, batch_first=True
-        )
-        o_dim = cfg.h_dim * 2
-        return o_dim
-    
-    def enc_seq(self, x, lengths=None, enforce_sorted=False, max_pooling=True):
-        x_embbed = self.enc_emb(x)
-        if lengths is None:
-            B, L = x.shape[:2]
-            enforce_sorted = True # sorted already
-            lengths = torch.tensor([L] * B).to(x)
-        x_packed = pack_padded_sequence(
-            x_embbed, lengths.cpu(), batch_first=True, enforce_sorted=enforce_sorted
-        )
-        h_packed, _ = self.enc_rnn(x_packed)
-        if max_pooling:
-            padding_value = float("-inf")
-            output, _ = pad_packed_sequence(
-                h_packed, batch_first=True, padding_value=padding_value
-            )
-            h, attn_weights = output.max(1)
-        else:
-            padding_value = 0
-            output, _ = pad_packed_sequence(
-                h_packed, batch_first=True, padding_value=padding_value
-            )
-            h = output.sum(1) / lengths.unsqueze(-1)
-            attn_weights = None
-        out = self.enc_out(h)
-        mean = out[:, : self.z_dim]
-        lvar = out[:, self.z_dim :]
-        return mean, lvar, (attn_weights,)
-
-    def parameterize(self, x, use_mean=False, **kwargs):
+    def parameterize(self, x, mean, lvar, use_mean=False, **kwargs):
         B, HW = x.shape[:2]
         H = W = int(np.sqrt(HW))
                 
         if self.z_dim > 0:
-            mean, lvar, *_ = self.enc_seq(x.view(B, -1))
             z = mean
             if not use_mean:
                 z = torch.zeros_like(mean).normal_(0, 1)
@@ -215,6 +167,8 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         self, 
         t: Tensor,
         v: Tensor,
+        mean: Tensor=None,
+        lvar: Tensor=None,
         t_seq: Tensor=None, 
         v_seq: Tensor=None,
         memory: Tensor=None,
@@ -226,8 +180,11 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         infer: bool=False,
         **kwargs
     ):
+        if self.z_dim > 0:
+            assert mean is not None and lvar is not None, f"need latent z but it is None"
+
         x = v_seq
-        pcfgs, kl, *_ = self.parameterize(x, use_mean=infer)
+        pcfgs, kl, *_ = self.parameterize(x, mean, lvar, use_mean=infer)
         
         rule_prob, root_prob, term_prob = self.pcfgs
         

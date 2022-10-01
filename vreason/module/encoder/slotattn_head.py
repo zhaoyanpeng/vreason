@@ -17,7 +17,7 @@ __all__ = ["SlotCNNEncHead", "SlotAttnEncHead"]
 class SlotCNNEncHead(MetaEncHead):
     def __init__(self, cfg, token_vocab, **kwargs):
         super().__init__(cfg, token_vocab)
-        I = 3 # 3-channel images
+        I = getattr(cfg, "w_dim", 3) # 3-channel images
         D = cfg.m_dim
         K = cfg.kernel_size
         activation = cfg.activation

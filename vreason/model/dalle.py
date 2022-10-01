@@ -380,11 +380,14 @@ class Dalle(MetaSolver):
         tunable_params = dict()
         mcfg = self.cfg.model 
         
-        vq_embed, vq = self.register_vq(mcfg)
-        vq_vocab_size, emb_size = vq_embed.shape[:2]
+        if mcfg.vq.load: # do we need to load it?
+            vq_embed, vq = self.register_vq(mcfg)
+            vq_vocab_size, emb_size = vq_embed.shape[:2]
 
-        if decoder_vocab is None:
-            decoder_vocab = [f"{i}" for i in range(vq_vocab_size)]
+            if decoder_vocab is None:
+                decoder_vocab = [f"{i}" for i in range(vq_vocab_size)]
+        else:
+            vq = None
 
         if self.cfg.eval:
             self.vq = vq # might need the model to decode codes

@@ -3,5 +3,5 @@ NT: 20
 T: 10 
 h_dim: 512
 w_dim: 512
-z_dim: 128
+z_dim: ${..encoder.z_dim}
 s_dim: 256

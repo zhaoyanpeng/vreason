@@ -1,6 +1,7 @@
 # VQGAN Param.
 name: PretrainedVQGAN
-gumbel: False
+load: true # do we have to load model weights
+gumbel: false
 model_root: "" 
 model_name: ""
 model_file: ""

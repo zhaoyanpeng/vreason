@@ -102,7 +102,7 @@ class Monitor(Meta):
 
             self.timeit(all_time, key="data")
 
-            with torch.cuda.amp.autocast():
+            with torch.cuda.amp.autocast(enabled=self.cfg.autocast):
                 loss, (ntoken, ret_dict) = self.model(**batch_dict)
             self.scaler.scale(loss).backward()
             self.step()
@@ -195,7 +195,7 @@ class Monitor(Meta):
 
             bsize = batch_dict["image"].shape[0]
 
-            with torch.cuda.amp.autocast():
+            with torch.cuda.amp.autocast(enabled=self.cfg.autocast):
                 loss_mean, (ntoken, ret_dict) = self.model(**batch_dict)
             loss = loss_mean * 1 
             

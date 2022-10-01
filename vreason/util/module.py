@@ -9,6 +9,39 @@ import torch.distributed as dist
 from torch.optim.lr_scheduler import StepLR
 from . import is_dist_avail_and_initialized, reduce_dict
 
+def warmup_schedule(
+    beta: float,
+    cycle_steps: int,
+    decay_ratio: float = 1.0,
+    alpha: float = 0.0,
+    cycle: bool = False,
+    activation: str = "cosine"
+):
+    
+    if not cycle_steps > 0:
+        raise ValueError('The cosine_decay_schedule requires positive cycle_steps!')
+    
+    decay_steps = cycle_steps * decay_ratio
+    
+    if activation == "cosine":
+        decay_fn = lambda x: .5 * (1. - math.cos(math.pi * x / decay_steps))
+    elif activation == "sigmoid":
+        decay_fn = lambda x: 1. / (1. + math.exp(-(x / decay_steps * 32 - 16)))
+    elif activation == "linear":
+        decay_fn = lambda x: x / decay_steps
+    else:
+        raise ValueError("The warmup function should be [cosine|sigmoid|linear]!")
+    
+    def schedule(count):
+        count = count % cycle_steps if cycle else count
+        count = cycle_steps if count == 0 else count
+        count = min(count, decay_steps)
+        decayed = decay_fn(count)
+        decayed = (1 - alpha) * decayed + alpha
+        return beta * decayed
+
+    return schedule
+
 class ExpDecayLR(StepLR):
     def __init__(self, optimizer, step_size, gamma=0.5, last_epoch=-1, verbose=False, **kwargs):
         super().__init__(optimizer, step_size, gamma=gamma, last_epoch=last_epoch, verbose=verbose)
@@ -46,6 +79,42 @@ class SlotattnLR(StepLR):
         return [base_lr * factor * self.gamma ** (self.last_epoch / self.step_size) for base_lr in self.base_lrs]
 
 torch.optim.lr_scheduler.SlotattnLR = SlotattnLR # append a module
+
+class WarmupExpDecayLR(StepLR):
+    def __init__(
+        self, optimizer, step_size, warmup_step=0, warmup_fn="linear",
+        gamma=0.5, last_epoch=-1, min_lr=0., verbose=False, **kwargs
+    ):
+        self.min_lr = min_lr
+        self.warmup_fn = warmup_fn
+        self.warmup_step = warmup_step # will be needed in a function call of the base class
+        super().__init__(
+            optimizer, step_size, gamma=gamma, last_epoch=last_epoch, verbose=verbose
+        )
+
+    def get_lr(self):
+        if not self._get_lr_called_within_step:
+            warnings.warn(
+                "To get the last learning rate computed by the scheduler, " +
+                "please use `get_last_lr()`.", UserWarning
+            )
+        return self._get_closed_form_lr()
+
+    def _get_closed_form_lr(self):
+        factor = 1
+        gamma = self.gamma
+        last_epoch = self.last_epoch + 1 - self.warmup_step 
+        if self.last_epoch < self.warmup_step:
+            last_epoch = self.last_epoch + 1
+            factor = last_epoch / self.warmup_step
+            if self.warmup_fn == "cosine":
+                factor = 0.5 * (1 - math.cos(math.pi * factor))
+            gamma = 1
+        lrs = [base_lr * factor * gamma ** (last_epoch / self.step_size) for base_lr in self.base_lrs]
+        lrs = [self.min_lr if lr < self.min_lr else lr for lr in lrs]
+        return lrs
+
+torch.optim.lr_scheduler.WarmupExpDecayLR = WarmupExpDecayLR # append a module
 
 class Stats(object):
     def __init__(self):

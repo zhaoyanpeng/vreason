@@ -14,6 +14,8 @@ seed: 1213
 eval: True 
 rank: -1
 mode: "ddp"
+autocast: true # mixed precisions
+check_unused_param: true # ddp require all param. to be used 
 num_proc: 0 # always 0 in ddp mode 
 num_gpus: 4 
 port: 22829

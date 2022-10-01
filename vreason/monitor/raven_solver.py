@@ -34,7 +34,7 @@ class Monitor(Meta):
             "decoder_vocab": self.decoder_vocab,
         })
         self.model = DistributedDataParallel(
-            model, device_ids=[cfg.rank], find_unused_parameters=True
+            model, device_ids=[cfg.rank], find_unused_parameters=cfg.check_unused_param
         ) if torch.distributed.is_initialized() else model 
         self.model.train(not cfg.eval)
         self.model_pointer = (self.model.module
@@ -237,6 +237,7 @@ class Monitor(Meta):
         self.echo(f"Gradienting The Following Parameters:")
         for k, v in self.model.named_parameters():
             if v.requires_grad:
+                k = re.sub("^module\.", "", k) if ddp else k
                 if k in decay:
                     dm = "dt"
                 else:

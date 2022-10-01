@@ -1,5 +1,9 @@
 name: PCFGLossHead
 layers: []
 scaling: False 
-kl_alpha: 1e-2 
-kl_max: 5e1 
+kl_decay_ratio: 1.0
+kl_cycle_steps: null # default to be cosine
+kl_activation: "cosine"
+kl_max_beta: 1e-2
+kl_cycle: False
+kl_max: null 

@@ -193,6 +193,7 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
         self.encoder_vocab = encoder_vocab
         self.train = train
 
+        self.require_txt = getattr(cfg, "require_txt", True)
         self.max_txt_len = cfg.max_txt_len
         self.max_txt_num = cfg.max_txt_num
         self.min_txt_num = cfg.min_txt_num
@@ -256,7 +257,10 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
     def __getitem__(self, index):
         sep = " SEP " # special symbol
         row = self.dataset.iloc[index]
-        caption = self.preprocess_text(row.caption.split(" SEP "))
+        caption = (
+            self.preprocess_text(row.caption.split(" SEP "))
+            if self.require_txt else [self.encoder_vocab.BOS_IDX]           
+        )
         image, _, vfile = self.preprocess_image(sample=row)
         return {
             "text": caption,

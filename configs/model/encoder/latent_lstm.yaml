@@ -1,0 +1,6 @@
+name: BiLSTMLatentEncHead
+z_dim: 64 
+w_dim: 512 
+m_dim: 512 
+pooling: max
+num_layer: 3 

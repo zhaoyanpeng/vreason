@@ -1,0 +1,13 @@
+name: BiAttnLatentEncHead
+z_dim: 64 
+w_dim: 512 
+m_dim: 512 
+f_dim: 2048 
+pooling: max
+num_head: 16 
+num_layer: 3 
+t_dropout: 0.
+stability: 0.
+norm_first: false 
+activation: gelu
+max_enc_len: 0 

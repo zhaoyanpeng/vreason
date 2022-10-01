@@ -10,6 +10,8 @@ from torch.distributions.kl import kl_divergence
 
 from fvcore.common.registry import Registry
 
+from ...util import warmup_schedule
+
 LOSS_HEADS_REGISTRY = Registry("LOSS_HEADS")
 LOSS_HEADS_REGISTRY.__doc__ = """
 Registry for encoder heads.
@@ -290,17 +292,23 @@ class PCFGLossHead(MetaLossHead):
         #    reduction="none", ignore_index=self.ignore_index
         #)
         self.accuracies = {word: [0] * 2 for word in ["overall"]}
-        self.kl_alpha = cfg.kl_alpha
         self.kl_max = cfg.kl_max
+        self.kl_beta_scheduler = warmup_schedule(
+            cfg.kl_max_beta, cfg.kl_cycle_steps if cfg.kl_cycle_steps is not None else 1, 
+            decay_ratio=cfg.kl_decay_ratio, cycle=cfg.kl_cycle, activation=cfg.kl_activation
+        )
+        self.num_step = 0
         self.reduce = False 
 
     def report(self, gold_file=None):
         # compute accuracies, called every epoch
-        result = ""
+        beta = self.kl_beta_scheduler(self.num_step)
+        result = f"beta {beta:.2e}" # ({self.num_step:.2e})"
         return result 
 
     def _estimate_loss(self, x, ll, kl, **kwargs):
-        loss = (kl * self.kl_alpha - ll).mean()
+        beta = self.kl_beta_scheduler(self.num_step)
+        loss = (kl * beta - ll).mean()
         ntoken = (x != self.ignore_index).sum()
         return loss, (ntoken.cpu().item(), None)
 
@@ -323,8 +331,12 @@ class PCFGLossHead(MetaLossHead):
         return x1.shape[0], 0 
 
     def forward(self, x, ll, kl=None, *args, **kwargs):
+        if self.training: # used to compute kl beta during training
+            self.num_step += 1
         kl = torch.zeros_like(ll) if kl is None else kl
-        kl.clamp_(max=self.kl_max)
+
+        if self.kl_max is not None:
+            kl.clamp_(max=self.kl_max)
         
         loss, (ntoken, _) = self._estimate_loss(x, ll, kl, **kwargs)
 

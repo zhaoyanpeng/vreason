@@ -1,0 +1,24 @@
+name: SlotAttnLatentEncHead
+block: SlotAttnBlock 
+z_dim: 64
+w_dim: 512
+m_dim: 512 # model
+f_dim: 2048 # forward
+pooling: max
+num_slot: 10 
+num_head: 1 
+num_layer: 1 
+p_dropout: 0.0 # position dropout
+t_dropout: 0.0 # transformer dropout
+attn_dropout: 0.0 # 
+proj_dropout: ${.t_dropout}
+attn_cls_intra: SlotAttention
+attn_cls_inter: null
+qk_scale: null
+qkv_bias: False
+epsilon: 1e-8
+niter: 3
+activation: relu 
+kernel_size: 3 
+input_resolution: 16 
+output_resolution: null 
