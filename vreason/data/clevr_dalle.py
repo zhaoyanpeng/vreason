@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import torch
 import numpy as np
@@ -6,6 +7,7 @@ import itertools
 from PIL import Image
 import albumentations
 import pandas as pd
+from functools import partial
 from braceexpand import braceexpand
 from omegaconf.listconfig import ListConfig
 
@@ -210,11 +212,36 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
         max_obj_num = min(cfg.max_obj_num, 10)
         all_df = all_df[(all_df['object_num'] >= min_obj_num) & (all_df['object_num'] <= max_obj_num)]
 
+        # more filter by image index
+        if train:
+            divider = cfg.train_divider
+            min_vid = max(cfg.min_train_vid, 0)
+            max_vid = min(cfg.max_train_vid, 1e9)
+        else:
+            divider = cfg.eval_divider
+            min_vid = max(cfg.min_eval_vid, 0)
+            max_vid = min(cfg.max_eval_vid, 1e9)
+
+        def filter_by_vid(row, min_vid, max_vid, divider):
+            try:
+                x = row["image"]
+                x = re.match(".*?_(\d+)\.png", x)
+                x = int(x.groups()[0]) % divider
+                return False if x < min_vid or x > max_vid else True 
+            except Exception as e:
+                return False 
+        partial_vid_filter_fn = partial(
+            filter_by_vid,
+            min_vid=min_vid,
+            max_vid=max_vid,
+            divider=divider,
+        )
+        all_df = all_df[all_df.apply(partial_vid_filter_fn, axis=1)]
+
         # select
         if chunk is not None:
             slicer = slice(chunk[0], chunk[1])
             all_df = all_df[slicer]
-
 
         self.dataset = all_df
         self.length = len(self.dataset)

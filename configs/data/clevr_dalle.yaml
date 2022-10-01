@@ -19,6 +19,12 @@ min_obj_num: 1  #10 # up to how many objects you want to generate
 max_txt_len: 64 # same as the dalle-mini
 min_txt_num: 2 
 max_txt_num: 100 # max len of a caption is 50, change this should also change `max_text_len` accordingly
+min_train_vid: 0 
+max_train_vid: 1e9
+train_divider: 10000
+min_eval_vid: 0
+max_eval_vid: 1e9
+eval_divider: 2000
 txt_vocab_name: caption_train.all.topk.dict
 vis_vocab_name: vis_vocab_is_null
 vis_vocab_size: ${..model.vq.vocab_size}
