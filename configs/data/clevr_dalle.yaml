@@ -19,6 +19,7 @@ min_obj_num: 1  #10 # up to how many objects you want to generate
 max_txt_len: 64 # same as the dalle-mini
 min_txt_num: 2 
 max_txt_num: 100 # max len of a caption is 50, change this should also change `max_text_len` accordingly
+min_pixel_num: 2 
 min_train_vid: 0 
 max_train_vid: 1e9
 train_divider: 10000

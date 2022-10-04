@@ -137,9 +137,6 @@ def save_image_local(
 ):
     assert len(names) == len(images), f"require one2one mapping between names and images."
     assert isinstance(images, np.ndarray) and images.ndim == 5, f"require 4D numpy images (B, W, H, C, N)"
-
-    if not os.path.exists(root):
-        os.makedirs(root)
     
     B, W, H, C, N = images.shape
     ncol = max(5, ncol)

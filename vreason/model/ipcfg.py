@@ -44,11 +44,11 @@ class IPCFG(Dalle):
         self.set_stats({}, outs[-1])
         return loss, outs 
 
-    def forward_ddp(self, image=None, device_ids=[0], **kwargs):
-        #kwargs.update({
-        #    "infer": True, "auto_infer": True, "exclude_trivial": True,
-        #    "require_marginal": True, "marginal_as_dict": True,
-        #})
+    def forward_ddp(self, image=None, device_ids=[0], infer=False, **kwargs):
+        kwargs.update({
+            "infer": infer, "auto_infer": True, "exclude_trivial": True,
+            "require_marginal": False, "marginal_as_dict": True,
+        })
 
         v_seq = self.tokenize_images(image) if image.dim() == 4 else image
 
@@ -65,6 +65,9 @@ class IPCFG(Dalle):
         
         loss, outs, *_ = self.loss_head(targets, ll, kl=kl)
         self.set_stats({}, outs[-1])
+
+        if infer: # the saving function of iPCFG
+            outs[-1].update({"save_fn": "save_parses", "best": argmax})
 
         v_peep_topk = kwargs.get("v_peep_topk", 0)
         if (v_peep_topk is None or v_peep_topk > 0) and is_main_process(): # master's job: keep it simpler

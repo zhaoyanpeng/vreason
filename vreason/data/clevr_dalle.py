@@ -2,6 +2,7 @@ import os
 import re
 import json
 import torch
+import warnings
 import numpy as np
 import itertools
 from PIL import Image
@@ -17,6 +18,54 @@ from torchvision.transforms import InterpolationMode
 
 from . import DatasetCatalog, register_indexer, build_dataloader
 from ..util import shorten_name 
+
+def convex_hull(boxes, f=16, d=0.25, s=0.8, return_boxes=False):
+    # rescale
+    xx = np.array(boxes, dtype=np.float32)
+    xx[:, 2] += xx[:, 0]
+    xx[:, 3] += xx[:, 1]
+    xx *= s
+    
+    # threshold
+    min_v = f * d
+    max_v = f * (1 - d)
+    c = xx // f
+    b = xx % f
+    
+    # adjust hull
+    x1 = np.clip(f - b[:, 0], 0, f) < min_v # + 1
+    y1 = np.clip(f - b[:, 1], 0, f) < min_v # + 1
+    x2 = b[:, 2] > min_v # + 1
+    y2 = b[:, 3] > min_v # + 1
+
+    indice = np.stack([x1, y1, x2, y2], axis=-1)
+    c[indice] += 1
+    
+    if return_boxes:
+        c[:, 2] -= c[:, 0]
+        c[:, 3] -= c[:, 1]
+        c = c * f / s
+    return c
+
+def extract_bbox(all_df, scene_data, d=0.25):
+    bbox_dict = dict()
+    for _, row in all_df.iterrows():
+        try:
+            #x = row["image"]
+            #x = re.match(".*?_(\d+)\.png", x)
+            #x = int(x.groups()[0])
+            x = row.vid
+        except Exception as e:
+            warnings.warn(f"{irow}\n{row}\n{e}")
+            continue
+        vidx = str(x)
+        nobj = row.object_num
+        bbox = [None] * nobj
+        for obj in scene_data[vidx]["objects"]:
+            bbox[obj["id"]] = obj["bbox"]
+        new_bbox = convex_hull(bbox, d=d)
+        bbox_dict[row.image.strip()] = new_bbox.astype(int)
+    return bbox_dict
 
 class ClevrImageTextData(torch.utils.data.Dataset):
     def __init__(
@@ -221,12 +270,25 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
             divider = cfg.eval_divider
             min_vid = max(cfg.min_eval_vid, 0)
             max_vid = min(cfg.max_eval_vid, 1e9)
-
-        def filter_by_vid(row, min_vid, max_vid, divider):
+        
+        # add a new vid column
+        def parse_vid(row):
             try:
                 x = row["image"]
                 x = re.match(".*?_(\d+)\.png", x)
-                x = int(x.groups()[0]) % divider
+                x = int(x.groups()[0])
+                return x
+            except Exception as e:
+                return -1
+        all_df["vid"] = all_df.apply(parse_vid, axis=1)
+        
+        # filter by remainder
+        def filter_by_vid(row, min_vid, max_vid, divider):
+            try:
+                #x = row["image"]
+                #x = re.match(".*?_(\d+)\.png", x)
+                #x = int(x.groups()[0]) % divider
+                x = row.vid % divider
                 return False if x < min_vid or x > max_vid else True 
             except Exception as e:
                 return False 
@@ -242,6 +304,12 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
         if chunk is not None:
             slicer = slice(chunk[0], chunk[1])
             all_df = all_df[slicer]
+        
+        # scene data
+        split = "train" if self.train else "val"
+        scene_file = f"{cfg.more_root}/scenes/CLEVR_{split}_scenes.all.json"
+        scene_data = json.load(open(scene_file, "r"))["scenes"]
+        self.bbox_dict = extract_bbox(all_df, scene_data, d=cfg.min_pixel_num / 16)
 
         self.dataset = all_df
         self.length = len(self.dataset)
@@ -289,7 +357,9 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
             if self.require_txt else [self.encoder_vocab.BOS_IDX]           
         )
         image, _, vfile = self.preprocess_image(sample=row)
+        bbox = self.bbox_dict[row.image]
         return {
+            "bbox": bbox,
             "text": caption,
             "image": image, 
             "vfile": vfile,

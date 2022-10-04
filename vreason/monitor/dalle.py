@@ -4,6 +4,7 @@ from collections import defaultdict
 from omegaconf.listconfig import ListConfig
 
 import json
+import glob
 import time
 import torch
 import random
@@ -19,6 +20,7 @@ from .raven_solver import Monitor as Meta
 from ..model import build_main_model
 from ..data import build_clevr_image_text_data
 
+from ..util import is_dist_avail_and_initialized, mkdir
 from ..util import numel, shorten_name, save_image_local, is_main_process, get_rank
 from ..module import LARS, exclude_bias_or_norm, adjust_learning_rate
 
@@ -63,17 +65,17 @@ class Monitor(Meta):
         )
 
     def make_batch(self, sample):
-        image = sample["image"]
+        image = sample.pop("image") #["image"]
         image = torch.from_numpy(image).to(self.device)
         if len(image.shape) == 4: # can be pre-encoded image token sequences
             image = image.permute(0, 3, 1, 2)
 
-        text = sample["text"]
+        text = sample.pop("text") #["text"]
         text = torch.from_numpy(text).to(self.device)
         
         text_mask = text == self.encoder_vocab.PAD_IDX
 
-        return {"image": image, "text": text, "text_mask": text_mask, "vfile": sample["vfile"]}
+        return {"image": image, "text": text, "text_mask": text_mask, "vfile": sample.pop("vfile")} #["vfile"]}
 
     def epoch(self, iepoch):
         self.model_pointer.reset()
@@ -168,12 +170,15 @@ class Monitor(Meta):
         if isinstance(self.model, DistributedDataParallel):
             dataloader.sampler.set_epoch(iepoch)
             nchunk = self.cfg.num_gpus
-
-        visual_peep_rate = int(max(len(dataloader) // self.cfg.running.v_peep_time, 1))
+        
+        total_batch = len(dataloader)
+        visual_peep_rate = int(max(total_batch // self.cfg.running.v_peep_time, 1))
         odir = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S") + f"-{self.cfg.alias_odir}" 
         odir = odir if self.cfg.running.infer_mode else "val"
 
-        peep_rate = max(10, (len(dataloader) // 10))
+        mkdir(f"{self.cfg.alias_root}/{self.cfg.alias_name}/{odir}") # will be sync-ed
+
+        peep_rate = max(10, (total_batch // 10))
         epoch_step = total_word = 0
         start_time = time.time()
         for ibatch, batch in enumerate(dataloader):
@@ -184,6 +189,7 @@ class Monitor(Meta):
             #self.show_batch(batch)
 
             batch_dict = self.make_batch(batch)
+            batch_dict.update(batch) # the rest
             batch_dict["infer"] = self.cfg.running.infer_mode 
             batch_dict["debug"] = False 
             batch_dict["analyze"] = True
@@ -194,13 +200,14 @@ class Monitor(Meta):
             batch_dict["v_peep_topk"] = v_peep_topk # save some sampled images
 
             bsize = batch_dict["image"].shape[0]
+            is_final = ibatch + 1 == total_batch
 
             with torch.cuda.amp.autocast(enabled=self.cfg.autocast):
                 loss_mean, (ntoken, ret_dict) = self.model(**batch_dict)
             loss = loss_mean * 1 
             
             self.save_images(
-                ret_dict, outdir=odir, prefix=f"e{iepoch:04d}-s{epoch_step:07d}-", **batch_dict
+                ret_dict, outdir=odir, prefix=f"e{iepoch:04d}-s{epoch_step:07d}-", is_final=is_final, **batch_dict
             ) # let us log some images
 
             epoch_step += 1
@@ -222,14 +229,52 @@ class Monitor(Meta):
             self.echo(f"EVAL STATS: {self.model_pointer.stats()}")
         return self.model_pointer.report()
 
+    def save_parses(
+        self, sampled, vfile=None, outdir="", prefix="", is_final=False, bbox=None, **kwargs
+    ):
+        root = f"{self.cfg.alias_root}/{self.cfg.alias_name}/{outdir}"
+
+        # one file per sample, no duplicates
+        best = sampled.pop("best", None)
+        for fname, gold, pred in zip(vfile, bbox, best):  
+            try:
+                fname = fname.rsplit("/", 1)[-1].rsplit(".", 1)[0].rsplit("_", 1)[-1]
+                gold = gold.tolist() if isinstance(gold, np.ndarray) else gold
+                pred = pred.tolist() if isinstance(pred, np.ndarray) else pred
+                with open(f"{root}/{fname}.json", "w") as fw:
+                    json.dump({"id": int(fname), "gold": gold, "pred": pred}, fw)
+            except Exception as e:
+                self.echo(f"Dump json err: {e}") #pass #continue
+
+        if is_final:
+            if is_dist_avail_and_initialized():
+                dist.barrier() # saving all done!
+            if is_main_process():
+                files = glob.glob(f"{root}/*.json")
+                try:
+                    all_data = dict()
+                    for fname in files:
+                        with open(fname, "r") as fr:
+                            data = json.load(fr)
+                            vid = data.pop("id")
+                            all_data[vid] = data
+                        os.remove(fname)
+                    with open(f"{root}/result.json", "w") as fw:
+                        json.dump(all_data, fw)
+                except Exception as e:
+                    self.echo(f"Merge json err: {e}") #pass #continue
+
     def save_images(
         self, sampled, text=None, image=None, text_mask=None, vfile=None, outdir="", prefix="", **kwargs
     ):
-        if sampled is None or len(sampled) == 0 or not is_main_process():
-            return # FIXME only save on the master process
+        save_fn = sampled.pop("save_fn", None) # always None for dalle models
+        if sampled is None or len(sampled) == 0 or (not is_main_process() and save_fn is None):
+            return None # FIXME only save on the master process
+        if save_fn is not None and hasattr(self, save_fn): # FIXME trick to use a different save function
+            return getattr(self, save_fn)(sampled, outdir=outdir, prefix=prefix, vfile=vfile, **kwargs)
         labeled = [(k, v) for k, v in sampled.items() if k.startswith("_sample")]
         if len(labeled) <= 0:
-            return
+            return None
         nsample = sampled["nsample"]
         image = image[:nsample]
         vfile = vfile[:nsample]
