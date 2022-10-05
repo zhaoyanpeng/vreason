@@ -7,3 +7,6 @@ kl_activation: "cosine"
 kl_max_beta: 1e-2
 kl_cycle: False
 kl_max: null 
+bh_beta: 0.0 # entropy regularizer
+sh_beta: 0.0 # entropy regularizer
+th_beta: 0.0 # entropy regularizer

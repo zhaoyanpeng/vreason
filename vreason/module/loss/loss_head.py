@@ -297,6 +297,9 @@ class PCFGLossHead(MetaLossHead):
             cfg.kl_max_beta, cfg.kl_cycle_steps if cfg.kl_cycle_steps is not None else 1, 
             decay_ratio=cfg.kl_decay_ratio, cycle=cfg.kl_cycle, activation=cfg.kl_activation
         )
+        self.bh_beta = cfg.bh_beta
+        self.sh_beta = cfg.sh_beta
+        self.th_beta = cfg.th_beta
         self.num_step = 0
         self.reduce = False 
 
@@ -306,9 +309,15 @@ class PCFGLossHead(MetaLossHead):
         result = f"beta {beta:.2e}" # ({self.num_step:.2e})"
         return result 
 
-    def _estimate_loss(self, x, ll, kl, **kwargs):
+    def _estimate_loss(self, x, ll, kl, h=None, **kwargs):
+        rule_ent, root_ent, term_ent = h
+        h = (
+            -rule_ent * self.bh_beta # maximize to explore both branches
+            -root_ent * self.sh_beta # maximize to explore both branches
+            -term_ent * self.th_beta # maximize to explore both branches
+        )
         beta = self.kl_beta_scheduler(self.num_step)
-        loss = (kl * beta - ll).mean()
+        loss = (kl * beta - ll + h).mean()
         ntoken = (x != self.ignore_index).sum()
         return loss, (ntoken.cpu().item(), None)
 
@@ -323,6 +332,36 @@ class PCFGLossHead(MetaLossHead):
         ppl = x.sum(1) / cnt
         return ppl
 
+    def _estimate_entropy(self, pcfgs):
+        rule_prob, root_prob, term_prob = pcfgs
+        
+        # binary rules
+        lr = rule_prob[:, :, 0].logsumexp((-1, -2)) # (B, NT)
+        ab = rule_prob[:, :, 1].logsumexp((-1, -2)) # (B, NT)
+
+        lr_ab = torch.stack((lr, ab), -1)
+        lr_ab_p = lr_ab.exp()
+
+        rule_ent = -(lr_ab_p * lr_ab).sum(-1).mean(-1) # (B,)
+        #print(rule_ent.cpu().numpy(), rule_ent.shape)
+        #print(torch.cat((lr_ab, lr_ab_p), -1))
+        
+        # start rules
+        sr = root_prob # (B, NT)
+        sr_p = sr.exp()
+
+        root_ent = -(sr_p * sr).sum(-1) # (B,)
+        #print(root_ent.cpu().numpy(), root_ent.shape)
+        
+        # pre-terminal rules
+        tr = term_prob.log_softmax(-1) # (B, L, T)
+        tr_p = tr.exp() 
+
+        term_ent = -(tr_p * tr).sum(-1).mean(-1) # (B,)
+        #print(term_ent.cpu().numpy(), term_ent.shape)
+        
+        return rule_ent, root_ent, term_ent
+
     def infer(self, x1, x2, *args, **kwargs): 
         results = self._estimate_loss(x1, x2)
         return results
@@ -330,19 +369,22 @@ class PCFGLossHead(MetaLossHead):
     def predict(self, x1, x2):
         return x1.shape[0], 0 
 
-    def forward(self, x, ll, kl=None, *args, **kwargs):
+    def forward(self, x, ll, kl=None, pcfgs=None, *args, **kwargs):
         if self.training: # used to compute kl beta during training
             self.num_step += 1
         kl = torch.zeros_like(ll) if kl is None else kl
 
         if self.kl_max is not None:
             kl.clamp_(max=self.kl_max)
+
+        rule_ent, root_ent, term_ent = entropy = self._estimate_entropy(pcfgs)
         
-        loss, (ntoken, _) = self._estimate_loss(x, ll, kl, **kwargs)
+        loss, (ntoken, _) = self._estimate_loss(x, ll, kl, h=entropy, **kwargs)
 
         nsample = x.shape[0]
         extra = {
             "main_loss": loss, "ll": ll.detach().sum(), "kl": kl.detach().sum(),
-            "nsample": nsample, "ntoken": ntoken + nsample, "nstep": 1
+            "nsample": nsample, "ntoken": ntoken + nsample, "nstep": 1,
+            "be": rule_ent.detach().sum(), "se": root_ent.detach().sum(), "te": term_ent.detach().sum(),
         } # ntoken = length + 1
         return loss, (ntoken, extra), {}

@@ -63,7 +63,7 @@ class IPCFG(Dalle):
         ##print(dec_extra["marginal"].keys())
         #import sys; sys.exit(0)
         
-        loss, outs, *_ = self.loss_head(targets, ll, kl=kl)
+        loss, outs, *_ = self.loss_head(targets, ll, kl=kl, pcfgs=self.decoder_head.pcfgs)
         self.set_stats({}, outs[-1])
 
         if infer: # the saving function of iPCFG
@@ -110,13 +110,18 @@ class IPCFG(Dalle):
         alpha = 1 / nsample * 1 if nsample > 0 else 0
         ll = stats["ll"] * alpha * -1
         kl = stats["kl"] * alpha
+        
+        be = stats["be"] * alpha # rule entropy
+        se = stats["se"] * alpha # root entropy
+        te = stats["te"] * alpha # term entropy
 
         ntoken = stats["ntoken"]
         alpha = 1 / ntoken * 1 if ntoken > 0 else 0
         elbo = np.exp(((stats["kl"] - stats["ll"]) * alpha).cpu())
         ppl = np.exp((-stats["ll"] * alpha).cpu()) 
 
-        info = f"loss {loss:.5f} elbo {elbo:.3f} ppl {ppl:.3f} ll {ll:.3f} kl {kl:.4f}"
+        #info = f"loss {loss:.5f} elbo {elbo:.3f} ppl {ppl:.3f} ll {ll:.3f} kl {kl:.4f}"
+        info = f"elbo {elbo:.3f} ll {ll:.3f} kl {kl:.4f} be {be:.4f} se {se:.3f} te {te:.3f}"
 
         loss_info = self._report() # debug
         info = f"{info} {loss_info}".strip()
