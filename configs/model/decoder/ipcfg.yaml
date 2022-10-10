@@ -5,3 +5,9 @@ h_dim: 512
 w_dim: 512
 z_dim: ${..encoder.z_dim}
 s_dim: 256
+drop_1d: false
+rate_1d: 3.
+beta_1d: 1.
+drop_2d: false
+rate_2d: 3.
+beta_2d: 1.

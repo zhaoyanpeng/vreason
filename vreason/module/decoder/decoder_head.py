@@ -46,6 +46,14 @@ class MetaDecHead(nn.Module):
         return "\n".join(extra_lines)
 
 @DECODER_HEADS_REGISTRY.register()
+class DummyDecHead(MetaDecHead):
+    def __init__(self, cfg, token_vocab, **kwargs):
+        super().__init__(cfg, token_vocab)
+        pass
+    def forward(self, *args, **kwargs):
+        return None, None, None, {} 
+
+@DECODER_HEADS_REGISTRY.register()
 class TorchTFDecHead(MetaDecHead):
     def __init__(self, cfg, token_vocab, **kwargs):
         super().__init__(cfg, token_vocab)

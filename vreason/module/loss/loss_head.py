@@ -310,7 +310,7 @@ class PCFGLossHead(MetaLossHead):
         return result 
 
     def _estimate_loss(self, x, ll, kl, h=None, **kwargs):
-        rule_ent, root_ent, term_ent = h
+        rule_ent, root_ent, term_ent = h[:3]
         h = (
             -rule_ent * self.bh_beta # maximize to explore both branches
             -root_ent * self.sh_beta # maximize to explore both branches
@@ -345,6 +345,18 @@ class PCFGLossHead(MetaLossHead):
         rule_ent = -(lr_ab_p * lr_ab).sum(-1).mean(-1) # (B,)
         #print(rule_ent.cpu().numpy(), rule_ent.shape)
         #print(torch.cat((lr_ab, lr_ab_p), -1))
+
+        #####
+        lr = rule_prob[:, :, 0] # (B, NT, NT_T, NT_T)
+        ab = rule_prob[:, :, 1] # (B, NT, NT_T, NT_T)
+
+        lr_ent = -(lr.exp() * lr).sum((-1, -2)).mean(-1) # (B,)
+        ab_ent = -(ab.exp() * ab).sum((-1, -2)).mean(-1) # (B,)
+        
+        both_ent = -(rule_prob.exp() * rule_prob).sum((-1, -2, -3)).mean(-1) # (B,)
+
+        rule_ent_detail = (lr_ent, ab_ent, both_ent)
+        #####
         
         # start rules
         sr = root_prob # (B, NT)
@@ -360,7 +372,7 @@ class PCFGLossHead(MetaLossHead):
         term_ent = -(tr_p * tr).sum(-1).mean(-1) # (B,)
         #print(term_ent.cpu().numpy(), term_ent.shape)
         
-        return rule_ent, root_ent, term_ent
+        return rule_ent, root_ent, term_ent, rule_ent_detail
 
     def infer(self, x1, x2, *args, **kwargs): 
         results = self._estimate_loss(x1, x2)
@@ -377,7 +389,8 @@ class PCFGLossHead(MetaLossHead):
         if self.kl_max is not None:
             kl.clamp_(max=self.kl_max)
 
-        rule_ent, root_ent, term_ent = entropy = self._estimate_entropy(pcfgs)
+        rule_ent, root_ent, term_ent, rule_ent_detail = entropy = self._estimate_entropy(pcfgs)
+        lr_ent, ab_ent, both_ent = rule_ent_detail
         
         loss, (ntoken, _) = self._estimate_loss(x, ll, kl, h=entropy, **kwargs)
 
@@ -386,5 +399,6 @@ class PCFGLossHead(MetaLossHead):
             "main_loss": loss, "ll": ll.detach().sum(), "kl": kl.detach().sum(),
             "nsample": nsample, "ntoken": ntoken + nsample, "nstep": 1,
             "be": rule_ent.detach().sum(), "se": root_ent.detach().sum(), "te": term_ent.detach().sum(),
+            "lr": lr_ent.detach().sum(), "ab": ab_ent.detach().sum(), "la": both_ent.detach().sum(),
         } # ntoken = length + 1
         return loss, (ntoken, extra), {}

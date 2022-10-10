@@ -95,7 +95,16 @@ class InsideAlg1D(InsideAlg): # standalone class, for sequential inputs
         return beta_area
 
     @staticmethod
-    def _inside_1d_parallel(type_area, beta_area, rule_prob, term_prob, verbose=False):
+    def _drop_beta(h, w, beta, drop_prob_fn, device):
+        p_drop = drop_prob_fn(h, w) 
+        if p_drop > 0:
+            p_mask = torch.full(beta.shape, p_drop, device=device).bernoulli().bool()
+#            print((h, w), p_drop, p_mask.sum().cpu().numpy(), p_mask.numel())
+            beta = beta.masked_fill(p_mask, 0.) 
+        return beta
+
+    @staticmethod
+    def _inside_1d_parallel(type_area, beta_area, rule_prob, term_prob, drop_1d_fn=None, verbose=False):
         device = beta_area.device
         B, W, _, NT = beta_area.shape
         Y_Z, Y_z, y_Z, y_z = rule_prob
@@ -112,6 +121,10 @@ class InsideAlg1D(InsideAlg): # standalone class, for sequential inputs
         sl = term_prob[:, :W - 1]
         sr = term_prob[:, 1:]
         beta = xyz(sl, sr, y_z)
+        # drop some betas / areas
+        beta = beta if drop_1d_fn is None else (
+            InsideAlg1D._drop_beta(1, 2, beta, drop_1d_fn, device)
+        )
         indice = torch.arange(W - 1).to(device)
         beta_area[:, indice, indice + 2] = beta[:, indice] + type_area[:, indice, indice + 2]
         
@@ -146,6 +159,10 @@ class InsideAlg1D(InsideAlg): # standalone class, for sequential inputs
                 beta3 = beta1[..., :0] # empty tensor
             
             beta = torch.cat((beta1, beta2, beta3), dim=-1).logsumexp(-1)
+            # drop some betas / areas
+            beta = beta if drop_1d_fn is None else (
+                InsideAlg1D._drop_beta(1, w, beta, drop_1d_fn, device)
+            )
             beta_area[:, indice, indice + w] = beta[:, indice] + type_area[:, indice, indice + w]
         return beta_area
 
@@ -383,7 +400,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         ]
         return parses
 
-    def _dp_parallel(self, infer=False, require_marginal=False, verbose=False, **kwargs):
+    def _dp_parallel(self, infer=False, require_marginal=False, verbose=False, drop_1d_fn=None, drop_2d_fn=None, **kwargs):
         rule_prob, root_prob, term_prob = self.pcfgs
         
         device = rule_prob.device
@@ -408,7 +425,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1, NT)
             sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1, NT)
             new_beta_area = self._inside_1d_parallel(
-                sub_type_area, sub_beta_area, lr_rule_prob, term_prob[:, y], verbose=False
+                sub_type_area, sub_beta_area, lr_rule_prob, term_prob[:, y], drop_1d_fn=drop_1d_fn, verbose=False,
             )
             beta_area[:, y, y + 1] = new_beta_area #+ sub_type_area
         
@@ -416,7 +433,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             sub_type_area = type_area[..., x, x + 1, :]
             sub_beta_area = beta_area[..., x, x + 1, :]
             new_beta_area = self._inside_1d_parallel(
-                sub_type_area, sub_beta_area, ab_rule_prob, term_prob[..., x, :]
+                sub_type_area, sub_beta_area, ab_rule_prob, term_prob[..., x, :], drop_1d_fn=drop_1d_fn,
             )
             beta_area[..., x, x + 1, :] = new_beta_area #+ sub_type_area
 
@@ -469,6 +486,11 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 # summarize betas
                 beta = torch.stack((beta1, beta2), dim=-1).logsumexp(-1) # (B, S, y, x)
                 
+                # drop some betas / areas
+                beta = beta if drop_2d_fn is None else (
+                    self._drop_beta(h, w, beta, drop_2d_fn, device)
+                )
+
                 y = y.repeat_interleave(W + 1 - w)
                 x = x.repeat(H + 1 - h)
                 beta_area[:, y, y + h, x, x + w] = beta[:, y, x] + type_area[:, y, y + h, x, x + w]
@@ -487,7 +509,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         marginal = self._compute_marginal(ll, type_area, **kwargs)
         return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
         
-    def _dp_serial(self, infer=False, require_marginal=False, verbose=False, **kwargs):
+    def _dp_serial(self, infer=False, require_marginal=False, verbose=False, drop_1d_fn=None, drop_2d_fn=None, **kwargs):
         rule_prob, root_prob, term_prob = self.pcfgs
         
         device = rule_prob.device

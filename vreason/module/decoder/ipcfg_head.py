@@ -1,5 +1,5 @@
 import numpy as np
-import os, sys, time
+import os, sys, time, math
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
@@ -11,6 +11,23 @@ from . import MetaDecHead, DECODER_HEADS_REGISTRY
 from .. import InsideAlg2D
 
 __all__ = ["IPCFGDecHead"]
+
+def mask_prob_schedule(
+    H: int,
+    W: int,
+    beta: float = 1.,
+    rate: float = 2.,
+    contrast: bool = False,
+):
+    total = H * W
+    c = 1 / total
+    def schedule(h, w):
+        count = h * w
+        inv = max(1 / count, c)
+        ratio = min(h, w) / max(h, w) if contrast else 0
+        p = math.exp(-count / total - ratio) ** rate * (inv - c)
+        return p * beta
+    return schedule
 
 class ResLayer(nn.Module):
     def __init__(self, in_dim, out_dim):
@@ -29,6 +46,14 @@ class IPCFGDecHead(MetaDecHead):
         super().__init__(cfg, None)
         self.s_dim = cfg.s_dim
         self.z_dim = cfg.z_dim
+        
+        self.drop_1d_fn = mask_prob_schedule(
+             1, 16, beta=cfg.beta_1d, rate=cfg.rate_1d, contrast=True,
+        ) if cfg.drop_1d else None
+        self.drop_2d_fn = mask_prob_schedule(
+            16, 16, beta=cfg.beta_2d, rate=cfg.rate_2d, contrast=True,
+        ) if cfg.drop_2d else None
+
 
         assert self.z_dim >= 0, f"Use the latent sequence embedding?"
 
@@ -186,9 +211,8 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         x = v_seq
         pcfgs, kl, *_ = self.parameterize(x, mean, lvar, use_mean=infer)
         
-        rule_prob, root_prob, term_prob = self.pcfgs
-        
         if verbose:
+            rule_prob, root_prob, term_prob = self.pcfgs
             if isinstance(rule_prob, tuple):
                 for x in rule_prob:
                     print(x.shape, torch.isnan(x).any())
@@ -197,8 +221,12 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
                 term_prob.shape, torch.isnan(term_prob).any()
             )
 
+        drop_1d_fn = self.drop_1d_fn if self.training else None
+        drop_2d_fn = self.drop_2d_fn if self.training else None
+
         outs = self.partition(
-            infer=infer, require_marginal=require_marginal, verbose=verbose, parallel=parallel, **kwargs
+            infer=infer, parallel=parallel, require_marginal=require_marginal,
+            drop_1d_fn=drop_1d_fn, drop_2d_fn=drop_2d_fn, verbose=verbose, **kwargs
         ) # ll, argmax, marginal, {}
         outs = (outs[0], kl, x) + outs[1:]
         return outs

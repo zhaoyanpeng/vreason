@@ -115,6 +115,10 @@ class IPCFG(Dalle):
         se = stats["se"] * alpha # root entropy
         te = stats["te"] * alpha # term entropy
 
+        lr = stats["lr"] * alpha # lr rule entropy
+        ab = stats["ab"] * alpha # ab rule entropy
+        la = stats["la"] * alpha # la rule entropy
+
         ntoken = stats["ntoken"]
         alpha = 1 / ntoken * 1 if ntoken > 0 else 0
         elbo = np.exp(((stats["kl"] - stats["ll"]) * alpha).cpu())
@@ -122,6 +126,8 @@ class IPCFG(Dalle):
 
         #info = f"loss {loss:.5f} elbo {elbo:.3f} ppl {ppl:.3f} ll {ll:.3f} kl {kl:.4f}"
         info = f"elbo {elbo:.3f} ll {ll:.3f} kl {kl:.4f} be {be:.4f} se {se:.3f} te {te:.3f}"
+        if not self.training:
+            info = f"{info} lr {lr:.3f} ab {ab:.3f}" # la {la:.3f}"
 
         loss_info = self._report() # debug
         info = f"{info} {loss_info}".strip()
