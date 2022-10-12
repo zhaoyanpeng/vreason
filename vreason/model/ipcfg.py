@@ -44,10 +44,10 @@ class IPCFG(Dalle):
         self.set_stats({}, outs[-1])
         return loss, outs 
 
-    def forward_ddp(self, image=None, device_ids=[0], infer=False, **kwargs):
+    def forward_ddp(self, image=None, device_ids=[0], infer=False, mbr=False, **kwargs):
         kwargs.update({
             "infer": infer, "auto_infer": True, "exclude_trivial": True,
-            "require_marginal": False, "marginal_as_dict": True,
+            "require_marginal": False, "marginal_as_dict": True, "mbr": mbr,
         })
 
         v_seq = self.tokenize_images(image) if image.dim() == 4 else image
