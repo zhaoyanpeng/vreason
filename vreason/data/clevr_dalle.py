@@ -17,63 +17,9 @@ import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode 
 
 from . import DatasetCatalog, register_indexer, build_dataloader
+from .clevr_function import *
 from ..util import shorten_name 
 
-def convex_hull(boxes, f=16, d=0.25, s=0.8, return_boxes=False, rotate=False):
-    # rescale
-    xx = np.array(boxes, dtype=np.float32)
-    xx[:, 2] += xx[:, 0]
-    xx[:, 3] += xx[:, 1]
-    xx *= s
-    
-    # threshold
-    min_v = f * d
-    max_v = f * (1 - d)
-    c = xx // f
-    b = xx % f
-    
-    # adjust hull
-    x1 = np.clip(f - b[:, 0], 0, f) < min_v # + 1
-    y1 = np.clip(f - b[:, 1], 0, f) < min_v # + 1
-    x2 = b[:, 2] > min_v # + 1
-    y2 = b[:, 3] > min_v # + 1
-
-    indice = np.stack([x1, y1, x2, y2], axis=-1)
-    c[indice] += 1
-
-    if rotate:
-        c_new = np.zeros_like(c)
-        c_new[:, 0] = c[:, 1]
-        c_new[:, 2] = c[:, 3]
-        c_new[:, 1] = f - c[:, 2]
-        c_new[:, 3] = f - c[:, 0]
-        c = c_new
-    
-    if return_boxes:
-        c[:, 2] -= c[:, 0]
-        c[:, 3] -= c[:, 1]
-        c = c * f / s
-    return c
-
-def extract_bbox(all_df, scene_data, d=0.25, rotate=False):
-    bbox_dict = dict()
-    for _, row in all_df.iterrows():
-        try:
-            #x = row["image"]
-            #x = re.match(".*?_(\d+)\.png", x)
-            #x = int(x.groups()[0])
-            x = row.vid
-        except Exception as e:
-            warnings.warn(f"{irow}\n{row}\n{e}")
-            continue
-        vidx = str(x)
-        nobj = row.object_num
-        bbox = [None] * nobj
-        for obj in scene_data[vidx]["objects"]:
-            bbox[obj["id"]] = obj["bbox"]
-        new_bbox = convex_hull(bbox, d=d, rotate=rotate)
-        bbox_dict[row.image.strip()] = new_bbox.astype(int)
-    return bbox_dict
 
 class ClevrImageTextData(torch.utils.data.Dataset):
     def __init__(
@@ -253,11 +199,24 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
         self.train = train
 
         self.require_txt = getattr(cfg, "require_txt", True)
-        self.rot90_image = getattr(cfg, "rot90_image", 0.)
+        self.rot90_image = getattr(cfg, "rot90_image", 0)
         self.object_name = getattr(cfg, "object_name", None)
+        self.vis_fake_hw = getattr(cfg, "vis_fake_hw", 0) # H x W
+        self.vis_fake_hw = (
+            [self.vis_fake_hw] * 2 if isinstance(self.vis_fake_hw, int) else list(self.vis_fake_hw)[:2]
+        )
+        self.obj_fake_hw = list(getattr(cfg, "obj_fake_hw", [])) # list of H x W
+        self.obj_delt_hw = list(getattr(cfg, "obj_delt_hw", [])) # H x W
+        self.rng_fake_hw = np.random.default_rng(7879)
+        self.max_vis_len = cfg.vis_vocab_size
         self.max_txt_len = cfg.max_txt_len
         self.max_txt_num = cfg.max_txt_num
         self.min_txt_num = cfg.min_txt_num
+
+        if isinstance(self.obj_fake_hw, list): # will fill object areas
+            self.obj_fake_id = self.rng_fake_hw.choice(
+                range(1, self.max_vis_len), len(self.obj_fake_hw), replace=False
+            )
         
         # read
         all_df = list()
@@ -347,6 +306,30 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
         return self.length
 
     def preprocess_image(self, sample=None, index=-1, mode="RGB"):
+        if isinstance(self.vis_fake_hw, list): # fake images
+            codes, vfile = [], sample.image
+            #codes = np.random.randint(0, high=self.max_vis_len, size=self.vis_fake_hw)
+            #codes = np.random.permutation(self.max_vis_len)[:np.prod(self.vis_fake_hw)]
+            cnt, max_try = 0, 16
+            create_2obj_fn = create_2obj_image if len(self.obj_delt_hw) == 0 else create_2obj_fixed
+            while len(codes) == 0:
+                codes, bbox = create_2obj_fn(
+                    self.vis_fake_hw, self.obj_fake_hw, self.obj_fake_id, self.rng_fake_hw, self.obj_delt_hw
+                )
+                cnt += 1
+                if cnt >= max_try:
+                    codes = np.zeros(self.vis_fake_hw).astype(int)
+                    warnings.warn(f"exceed max_try and return all zeros")
+                if len(codes) == 0:
+                    continue
+                for idx, hw in zip(self.obj_fake_id, self.obj_fake_hw):
+                    if (idx == codes).sum() != np.prod(hw):
+                        warnings.warn(f"bug in \n{codes}")
+                        codes = []
+            #print(codes, codes.shape)
+            codes = codes.flatten() if codes.ndim > 1 else codes
+            return codes, bbox, vfile
+
         codes = np.array(sample.encoding)
         if self.rot90_image > 0. and np.random.uniform() < self.rot90_image:
             codes = np.rot90(codes.reshape(self.H, self.W)).flatten()
@@ -381,8 +364,8 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
             self.preprocess_text(row.caption.split(" SEP "))
             if self.require_txt else [self.encoder_vocab.BOS_IDX]           
         )
-        image, _, vfile = self.preprocess_image(sample=row)
-        bbox = self.bbox_dict[row.image]
+        image, bbox, vfile = self.preprocess_image(sample=row)
+        bbox = self.bbox_dict[row.image] if bbox is None else bbox
         return {
             "bbox": bbox,
             "text": caption,

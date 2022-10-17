@@ -46,7 +46,7 @@ class IPCFG(Dalle):
 
     def forward_ddp(self, image=None, device_ids=[0], infer=False, mbr=False, **kwargs):
         kwargs.update({
-            "infer": infer, "auto_infer": True, "exclude_trivial": True,
+            "infer": infer, "auto_infer": False, "exclude_trivial": True,
             "require_marginal": False, "marginal_as_dict": True, "mbr": mbr,
         })
 

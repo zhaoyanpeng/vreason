@@ -261,6 +261,33 @@ class Monitor(Meta):
                         os.remove(fname)
                     with open(f"{root}/result.json", "w") as fw:
                         json.dump(all_data, fw)
+                    self.echo(f"Saving to {root}")
+                    ##### BEGIN
+                    nsample = len(all_data)
+                    row = col = other = total = 0
+                    yxyx_to_xyxy = lambda yxyx: [
+                        [x[1], x[0], x[3], x[2]] for x in yxyx
+                    ]
+                    for _, v in all_data.items():
+                        pred = v["pred"]
+                        total += len(pred)
+                        pred = yxyx_to_xyxy(pred)
+                        for b in pred:
+                            x1, y1, x2, y2 = b
+                            if x2 - x1 == 1:
+                                col += 1
+                            if y2 - y1 == 1:
+                                row += 1
+                            if x2 - x1 != 1 and y2 - y1 != 1:
+                                other += 1
+                    ratio_row, ratio_col, ratio_other = [x / total for x in [row, col, other]]
+                    self.echo(
+                        f"Biased by " +
+                        f"row {ratio_row:.3f} ({row / nsample:.3f}) " +
+                        f"col {ratio_col:.3f} ({col / nsample:.3f}) " +
+                        f"other {ratio_other:.3f} ({other / nsample:.3f}) # sample {nsample}"
+                    )
+                    ##### END
                 except Exception as e:
                     self.echo(f"Merge json err: {e}") #pass #continue
 

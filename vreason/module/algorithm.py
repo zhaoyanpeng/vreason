@@ -444,7 +444,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             ll.sum(), type_area, create_graph=True, only_inputs=True, allow_unused=False
         )[0]
         
-        marginals = marginals.permute(0, 1, 3, 2, 4)
+        marginals = marginals.permute(0, 1, 3, 2, 4) # (B, Y1, X1, Y2, X2)
         best_area = marginals.nonzero()
         best_beta = marginals[
             best_area[:, 0], best_area[:, 1], best_area[:, 2], best_area[:, 3], best_area[:, 4]
@@ -637,7 +637,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             if marginals.dim() == 6: # only unlabled eval is supported
                 marginals = marginals.sum(-1)
 
-            marginals = marginals.permute(0, 1, 3, 2, 4) # (B, X1, Y1, X2, Y2)
+            marginals = marginals.permute(0, 1, 3, 2, 4) # (B, Y1, X1, Y2, X2)
             best_area = marginals.nonzero()
             best_beta = marginals[
                 best_area[:, 0], best_area[:, 1], best_area[:, 2], best_area[:, 3], best_area[:, 4]
