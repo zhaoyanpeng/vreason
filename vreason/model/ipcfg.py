@@ -57,13 +57,14 @@ class IPCFG(Dalle):
         ll, kl, targets, argmax, marginal, dec_extra = self.decoder_head(
             None, None, v_seq=v_seq, mean=mean, lvar=lvar, **kwargs
         )
+        ll1d = dec_extra.get("ll1d", torch.tensor(0).to(ll)) # row- and col-wise ll 
 
         #print(dec_extra["argmax"][0])
         #print(dec_extra["marginal"][0].shape)
         ##print(dec_extra["marginal"].keys())
         #import sys; sys.exit(0)
         
-        loss, outs, *_ = self.loss_head(targets, ll, kl=kl, pcfgs=self.decoder_head.pcfgs)
+        loss, outs, *_ = self.loss_head(targets, ll, kl=kl, ll1d=ll1d, pcfgs=self.decoder_head.pcfgs)
         self.set_stats({}, outs[-1])
 
         if infer: # the saving function of iPCFG
@@ -118,6 +119,8 @@ class IPCFG(Dalle):
         lr = stats["lr"] * alpha # lr rule entropy
         ab = stats["ab"] * alpha # ab rule entropy
         la = stats["la"] * alpha # la rule entropy
+        
+        ll2 = stats["ll2"] * alpha * -1 if "ll2" in stats else None# 1d / 2d ll
 
         ntoken = stats["ntoken"]
         alpha = 1 / ntoken * 1 if ntoken > 0 else 0
@@ -126,6 +129,8 @@ class IPCFG(Dalle):
 
         #info = f"loss {loss:.5f} elbo {elbo:.3f} ppl {ppl:.3f} ll {ll:.3f} kl {kl:.4f}"
         info = f"elbo {elbo:.3f} ll {ll:.3f} kl {kl:.4f} be {be:.4f} se {se:.3f} te {te:.3f}"
+        if ll2 is not None:
+            info = f"{info} ll2 {ll2:.3f}" 
         if not self.training:
             info = f"{info} lr {lr:.3f} ab {ab:.3f}" # la {la:.3f}"
 

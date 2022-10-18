@@ -54,6 +54,8 @@ class IPCFGDecHead(MetaDecHead):
             16, 16, beta=cfg.beta_2d, rate=cfg.rate_2d, contrast=True,
         ) if cfg.drop_2d else None
 
+        self.mini_1d_ll = cfg.mini_1d_ll # minimize 1d (row- col-wise) log-likelihood 
+        self.mini_1d_2d = cfg.mini_1d_2d # minimize both 1d (row- col-wise) and 2d ll 
 
         assert self.z_dim >= 0, f"Use the latent sequence embedding?"
 
@@ -101,11 +103,14 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         self.root_emb = nn.Parameter(torch.randn(1, s_dim))
         
         rule_dim = s_dim + z_dim
+        #rule_modules = (
+        #    nn.Linear(rule_dim, self.NT_T ** 2 * 2),
+        #) # horizon and vertical
         rule_modules = (
             nn.Linear(rule_dim, s_dim),
             ResLayer(s_dim, s_dim),
             ResLayer(s_dim, s_dim),
-            nn.Linear(s_dim, self.NT_T ** 2 * 2)
+            nn.Linear(s_dim, self.NT_T ** 2 * 2),
         ) # horizon and vertical
         self.rule_mlp = nn.Sequential(*rule_modules)
         
@@ -224,9 +229,11 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         drop_1d_fn = self.drop_1d_fn if self.training else None
         drop_2d_fn = self.drop_2d_fn if self.training else None
 
+        require_1d_ll = self.mini_1d_ll or self.mini_1d_2d
+
         outs = self.partition(
-            infer=infer, parallel=parallel, require_marginal=require_marginal,
-            drop_1d_fn=drop_1d_fn, drop_2d_fn=drop_2d_fn, verbose=verbose, **kwargs
+            infer=infer, parallel=parallel, require_marginal=require_marginal, verbose=verbose,
+            drop_1d_fn=drop_1d_fn, drop_2d_fn=drop_2d_fn, require_1d_ll=require_1d_ll, **kwargs
         ) # ll, argmax, marginal, {}
         outs = (outs[0], kl, x) + outs[1:]
         return outs

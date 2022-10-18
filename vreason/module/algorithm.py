@@ -391,7 +391,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         for y in range(H): # area 1 x w
             sub_span_area = areas[:, y, y + 1]
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1)
-            sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1)
+            sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1)
             new_beta_area = self._mbr_1d_auto(
                 sub_type_area, sub_beta_area, sub_span_area, verbose=verbose
             )
@@ -416,14 +416,14 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 x = torch.arange(W + 1 - w).to(device)
                    
                 # case 1: left-right composition
-                sub_beta_area = beta_area[:, y, y + h].permute(0, 2, 3, 1)
+                sub_beta_area = beta_area[:, y, y + h].clone().permute(0, 2, 3, 1)
                 sl = stripe(sub_beta_area, W + 1 - w, w - 1, (0, 1), 1) # (B, kx, s, y)
                 sr = stripe(sub_beta_area, W + 1 - w, w - 1, (1, w), 0) # (B, kx, s, y)
 #                 beta1, k1 = (sl + sr).permute(0, 3, 1, 2).max(-1) # (B, y, kx, w - 1)
                 beta1 = (sl + sr).permute(0, 3, 1, 2)
                 
                 # case 2: above-below composition
-                sub_beta_area = beta_area[..., x, x + w]
+                sub_beta_area = beta_area[..., x, x + w].clone()
                 sa = stripe(sub_beta_area, H + 1 - h, h - 1, (0, 1), 1) # (B, ky, s, x)
                 sb = stripe(sub_beta_area, H + 1 - h, h - 1, (1, h), 0) # (B, ky, s, x)
 #                 beta2, k2 = (sa + sb).permute(0, 1, 3, 2).max(-1) # (B, ky, x, h - 1)
@@ -474,7 +474,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         for y in range(H): # area 1 x w
             sub_span_area = areas[:, y, y + 1]
             sub_best_area = best_area[:, y, y + 1] # (B, W, W + 1)
-            sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1)
+            sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1)
             new_beta_area, new_best_area = self._mbr_1d_manual(
                 sub_best_area, sub_beta_area, sub_span_area, verbose=verbose
             )
@@ -484,7 +484,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         for x in range(W): # area h x 1
             sub_span_area = areas[..., x, x + 1]
             sub_best_area = best_area[..., x, x + 1]
-            sub_beta_area = beta_area[..., x, x + 1]
+            sub_beta_area = beta_area[..., x, x + 1].clone()
             new_beta_area, new_best_area = self._mbr_1d_manual(
                 sub_best_area, sub_beta_area, sub_span_area, verbose=verbose
             )
@@ -501,14 +501,14 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 x = torch.arange(W + 1 - w).to(device)
                    
                 # case 1: left-right composition
-                sub_beta_area = beta_area[:, y, y + h].permute(0, 2, 3, 1)
+                sub_beta_area = beta_area[:, y, y + h].clone().permute(0, 2, 3, 1)
                 sl = stripe(sub_beta_area, W + 1 - w, w - 1, (0, 1), 1) # (B, kx, s, y)
                 sr = stripe(sub_beta_area, W + 1 - w, w - 1, (1, w), 0) # (B, kx, s, y)
 #                 beta1, k1 = (sl + sr).permute(0, 3, 1, 2).max(-1) # (B, y, kx, w - 1)
                 beta1 = (sl + sr).permute(0, 3, 1, 2)
                 
                 # case 2: above-below composition
-                sub_beta_area = beta_area[..., x, x + w]
+                sub_beta_area = beta_area[..., x, x + w].clone()
                 sa = stripe(sub_beta_area, H + 1 - h, h - 1, (0, 1), 1) # (B, ky, s, x)
                 sb = stripe(sub_beta_area, H + 1 - h, h - 1, (1, h), 0) # (B, ky, s, x)
 #                 beta2, k2 = (sa + sb).permute(0, 1, 3, 2).max(-1) # (B, ky, x, h - 1)
@@ -576,7 +576,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         
         for y in range(H): # area 1 x w
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1, NT)
-            sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1, NT)
+            sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1, NT)
             new_beta_area = self._viterbi_1d_auto(
                 sub_type_area, sub_beta_area, lr_rule_prob, term_prob[:, y], verbose=False,
             )
@@ -584,7 +584,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         
         for x in range(W): # area h x 1
             sub_type_area = type_area[..., x, x + 1, :]
-            sub_beta_area = beta_area[..., x, x + 1, :]
+            sub_beta_area = beta_area[..., x, x + 1, :].clone()
             new_beta_area = self._viterbi_1d_auto(
                 sub_type_area, sub_beta_area, ab_rule_prob, term_prob[..., x, :],
             )
@@ -608,13 +608,13 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 x = torch.arange(W + 1 - w).to(device)
                 
                 # case 1: left-right composition
-                sub_beta_area = beta_area[:, y, y + h].permute(0, 2, 3, 4, 1)
+                sub_beta_area = beta_area[:, y, y + h].clone().permute(0, 2, 3, 4, 1)
                 sl = stripe(sub_beta_area, W + 1 - w, w - 1, (0, 1), 1) # (B, kx, s, r, y)
                 sr = stripe(sub_beta_area, W + 1 - w, w - 1, (1, w), 0) # (B, kx, s, r, y)
                 beta1 = xyz(sl, sr, lr_Y_Z).permute(0, 3, 2, 1) # (B, S, kx, y) -> (B, y, kx, S)
 
                 # case 2: above-below composition
-                sub_beta_area = beta_area[..., x, x + w, :].permute(0, 1, 2, 4, 3)
+                sub_beta_area = beta_area[..., x, x + w, :].clone().permute(0, 1, 2, 4, 3)
                 sa = stripe(sub_beta_area, H + 1 - h, h - 1, (0, 1), 1) # (B, ky, s, r, x)
                 sb = stripe(sub_beta_area, H + 1 - h, h - 1, (1, h), 0) # (B, ky, s, r, x)
                 beta2 = xyz(sa, sb, ab_Y_Z).permute(0, 2, 3, 1) # (B, S, ky, x) -> (B, ky, x, S)
@@ -696,7 +696,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         for y in range(H): # area 1 x w
             sub_best_area = best_area[:, y, y + 1] # (B, W, W + 1, NT)
             sub_best_type = best_type[:, y, y + 1]
-            sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1, NT)
+            sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1, NT)
             new_beta_area, new_best_area, new_best_type = self._viterbi_1d_manual(
                 sub_best_area, sub_best_type, sub_beta_area, lr_rule_prob, term_prob[:, y], verbose=(y == 0),
             )
@@ -707,7 +707,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         for x in range(W): # area h x 1
             sub_best_area = best_area[..., x, x + 1, :]
             sub_best_type = best_type[..., x, x + 1, :]
-            sub_beta_area = beta_area[..., x, x + 1, :]
+            sub_beta_area = beta_area[..., x, x + 1, :].clone()
             new_beta_area, new_best_area, new_best_type = self._viterbi_1d_manual(
                 sub_best_area, sub_best_type, sub_beta_area, ab_rule_prob, term_prob[..., x, :], verbose=False,
             )
@@ -740,7 +740,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 x = torch.arange(W + 1 - w).to(device)
                 
                 # case 1: left-right composition
-                sub_beta_area = beta_area[:, y, y + h].permute(0, 2, 3, 4, 1)
+                sub_beta_area = beta_area[:, y, y + h].clone().permute(0, 2, 3, 4, 1)
                 sl = stripe(sub_beta_area, W + 1 - w, w - 1, (0, 1), 1) # (B, kx, s, r, y)
                 sr = stripe(sub_beta_area, W + 1 - w, w - 1, (1, w), 0) # (B, kx, s, r, y)
                 beta1, best1, type1 = xyz(sl, sr, lr_Y_Z) # among w - 1
@@ -749,7 +749,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 best1 = best1.permute(0, 3, 2, 1)
 
                 # case 2: above-below composition
-                sub_beta_area = beta_area[..., x, x + w, :].permute(0, 1, 2, 4, 3)
+                sub_beta_area = beta_area[..., x, x + w, :].clone().permute(0, 1, 2, 4, 3)
                 sa = stripe(sub_beta_area, H + 1 - h, h - 1, (0, 1), 1) # (B, ky, s, r, x)
                 sb = stripe(sub_beta_area, H + 1 - h, h - 1, (1, h), 0) # (B, ky, s, r, x)
                 beta2, best2, type2 = xyz(sa, sb, ab_Y_Z) # among h - 1
@@ -812,8 +812,26 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         
         marginal = self._compute_marginal(ll, type_area, **kwargs)
         return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
-    
-    def _dp_parallel(self, infer=False, require_marginal=False, verbose=False, drop_1d_fn=None, drop_2d_fn=None, **kwargs):
+
+    def _ll_1d(self, beta_area, root_prob, H, W):
+        row_ll = 0
+        for y in range(H): # area 1 x w
+            sub_beta_area = beta_area[:, y, y + 1, 0, W] # (B, NT)
+            sub_ll = (sub_beta_area + root_prob).logsumexp(-1) 
+            row_ll += sub_ll
+
+        col_ll = 0 
+        for x in range(W): # area h x 1
+            sub_beta_area = beta_area[:, 0, H, x, x + 1] # (B, NT)
+            sub_ll = (sub_beta_area + root_prob).logsumexp(-1)
+            col_ll += col_ll
+        
+        return (row_ll + col_ll) / (H + W)
+
+    def _dp_parallel(
+        self, infer=False, require_marginal=False, verbose=False,
+        drop_1d_fn=None, drop_2d_fn=None, require_1d_ll=False, **kwargs,
+    ):
         if infer and not kwargs.get("mbr", False):
             return self._viterbi_2d_auto(
                 require_marginal=require_marginal, verbose=verbose, **kwargs
@@ -843,7 +861,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
 
         for y in range(H): # area 1 x w
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1, NT)
-            sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1, NT)
+            sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1, NT)
             new_beta_area = self._inside_1d_parallel(
                 sub_type_area, sub_beta_area, lr_rule_prob, term_prob[:, y], drop_1d_fn=drop_1d_fn, verbose=False,
             )
@@ -851,7 +869,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         
         for x in range(W): # area h x 1
             sub_type_area = type_area[..., x, x + 1, :]
-            sub_beta_area = beta_area[..., x, x + 1, :]
+            sub_beta_area = beta_area[..., x, x + 1, :].clone()
             new_beta_area = self._inside_1d_parallel(
                 sub_type_area, sub_beta_area, ab_rule_prob, term_prob[..., x, :], drop_1d_fn=drop_1d_fn,
             )
@@ -886,7 +904,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 # |  |   |
                 # |  |   |
                 # --------
-                sub_beta_area = beta_area[:, y, y + h].permute(0, 2, 3, 4, 1)
+                sub_beta_area = beta_area[:, y, y + h].clone().permute(0, 2, 3, 4, 1)
                 sl = stripe(sub_beta_area, W + 1 - w, w - 1, (0, 1), 1) # (B, kx, s, r, y)
                 sr = stripe(sub_beta_area, W + 1 - w, w - 1, (1, w), 0) # (B, kx, s, r, y)
                 beta1 = xyz(sl, sr, lr_Y_Z).permute(0, 3, 2, 1) # (B, S, kx, y) -> (B, y, kx, S)
@@ -898,7 +916,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 # |~~~~~~|
                 # |      |
                 # --------
-                sub_beta_area = beta_area[..., x, x + w, :].permute(0, 1, 2, 4, 3)
+                sub_beta_area = beta_area[..., x, x + w, :].clone().permute(0, 1, 2, 4, 3)
                 sa = stripe(sub_beta_area, H + 1 - h, h - 1, (0, 1), 1) # (B, ky, s, r, x)
                 sb = stripe(sub_beta_area, H + 1 - h, h - 1, (1, h), 0) # (B, ky, s, r, x)
                 beta2 = xyz(sa, sb, ab_Y_Z).permute(0, 2, 3, 1) # (B, S, ky, x) -> (B, ky, x, S)
@@ -918,18 +936,24 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         final = beta_area[:, 0, H, 0, W] + root_prob
         # final = beta_area[:, 0, H, 0, W]
         ll = final.logsumexp(-1)
+
+        # compute ll along columns or rows
+        ll_1d = self._ll_1d(beta_area, root_prob, H, W) if require_1d_ll else torch.tensor(0).to(ll)
         
         argmax = (
             None if not infer else self._extract_parse(ll, type_area, **kwargs)
         )
         
         if not require_marginal:
-            return ll, argmax, None, {"argmax": argmax, "marginal": None}
+            return ll, argmax, None, {"argmax": argmax, "marginal": None, "ll1d": ll_1d}
         
         marginal = self._compute_marginal(ll, type_area, **kwargs)
-        return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
+        return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal, "ll1d": ll_1d}
         
-    def _dp_serial(self, infer=False, require_marginal=False, verbose=False, drop_1d_fn=None, drop_2d_fn=None, **kwargs):
+    def _dp_serial(
+        self, infer=False, require_marginal=False, verbose=False,
+        drop_1d_fn=None, drop_2d_fn=None, require_1d_ll=False, **kwargs
+    ):
         rule_prob, root_prob, term_prob = self.pcfgs
         
         device = rule_prob.device
@@ -952,7 +976,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         
         for y in range(H): # area 1 x w
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1, NT)
-            sub_beta_area = beta_area[:, y, y + 1] # (B, W, W + 1, NT)
+            sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1, NT)
             new_beta_area = self._inside_1d_serial(
                 sub_type_area, sub_beta_area, lr_rule_prob, term_prob[:, y], verbose=False
             )
@@ -960,7 +984,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         
         for x in range(W): # area h x 1
             sub_type_area = type_area[..., x, x + 1, :]
-            sub_beta_area = beta_area[..., x, x + 1, :]
+            sub_beta_area = beta_area[..., x, x + 1, :].clone()
             new_beta_area = self._inside_1d_serial(
                 sub_type_area, sub_beta_area, ab_rule_prob, term_prob[..., x, :]
             )
@@ -1022,13 +1046,16 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         final = beta_area[:, 0, H, 0, W] + root_prob
         # final = beta_area[:, 0, H, 0, W]
         ll = final.logsumexp(-1)
+
+        # compute ll along columns or rows
+        ll_1d = self._ll_1d(beta_area, root_prob, H, W) if require_1d_ll else torch.tensor(0).to(ll)
         
         argmax = (
             None if not infer else self._extract_parse(ll, type_area, **kwargs)
         )
         
         if not require_marginal:
-            return ll, argmax, None, {"argmax": argmax, "marginal": None}
+            return ll, argmax, None, {"argmax": argmax, "marginal": None, "ll1d": ll_1d}
         
         marginal = self._compute_marginal(ll, type_area, **kwargs)
-        return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
+        return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal, "ll1d": ll_1d}

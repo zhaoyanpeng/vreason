@@ -292,6 +292,8 @@ class PCFGLossHead(MetaLossHead):
         #    reduction="none", ignore_index=self.ignore_index
         #)
         self.accuracies = {word: [0] * 2 for word in ["overall"]}
+        self.mini_1d_ll = cfg.mini_1d_ll # minimize 1d (row- col-wise) log-likelihood 
+        self.mini_1d_2d = cfg.mini_1d_2d # minimize both 1d (row- col-wise) and 2d ll 
         self.kl_max = cfg.kl_max
         self.kl_beta_scheduler = warmup_schedule(
             cfg.kl_max_beta, cfg.kl_cycle_steps if cfg.kl_cycle_steps is not None else 1, 
@@ -309,17 +311,25 @@ class PCFGLossHead(MetaLossHead):
         result = f"beta {beta:.2e}" # ({self.num_step:.2e})"
         return result 
 
-    def _estimate_loss(self, x, ll, kl, h=None, **kwargs):
+    def _estimate_loss(self, x, ll, kl, h=None, ll1d=0., **kwargs):
         rule_ent, root_ent, term_ent = h[:3]
         h = (
             -rule_ent * self.bh_beta # maximize to explore both branches
             -root_ent * self.sh_beta # maximize to explore both branches
             -term_ent * self.th_beta # maximize to explore both branches
         )
+        if self.mini_1d_2d:
+            ll2 = ll1d
+            ll = ll + ll1d
+        elif self.mini_1d_ll:
+            ll2 = None 
+            ll = ll1d
+        else: # peep 1d ll
+            ll2 = None 
         beta = self.kl_beta_scheduler(self.num_step)
         loss = (kl * beta - ll + h).mean()
         ntoken = (x != self.ignore_index).sum()
-        return loss, (ntoken.cpu().item(), None)
+        return loss, (ntoken.cpu().item(), ll2)
 
     def _estimate_ppl(self, x):
         if x.shape[-1] == 0:
@@ -392,7 +402,7 @@ class PCFGLossHead(MetaLossHead):
         rule_ent, root_ent, term_ent, rule_ent_detail = entropy = self._estimate_entropy(pcfgs)
         lr_ent, ab_ent, both_ent = rule_ent_detail
         
-        loss, (ntoken, _) = self._estimate_loss(x, ll, kl, h=entropy, **kwargs)
+        loss, (ntoken, ll2) = self._estimate_loss(x, ll, kl, h=entropy, **kwargs)
 
         nsample = x.shape[0]
         extra = {
@@ -401,4 +411,6 @@ class PCFGLossHead(MetaLossHead):
             "be": rule_ent.detach().sum(), "se": root_ent.detach().sum(), "te": term_ent.detach().sum(),
             "lr": lr_ent.detach().sum(), "ab": ab_ent.detach().sum(), "la": both_ent.detach().sum(),
         } # ntoken = length + 1
+        if ll2 is not None:
+            extra.update({"ll2": ll2.detach().sum()})
         return loss, (ntoken, extra), {}
