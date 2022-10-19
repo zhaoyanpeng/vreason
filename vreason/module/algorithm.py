@@ -56,7 +56,7 @@ class InsideAlg1D(InsideAlg): # standalone class, for sequential inputs
         return X_Y_Z, X_Y_z, X_y_Z, X_y_z
 
     @staticmethod
-    def _inside_1d_serial(type_area, beta_area, rule_prob, term_prob, verbose=False):
+    def _inside_1d_serial(type_area, beta_area, rule_prob, term_prob, drop_1d_fn=None, verbose=False):
         B, W, _, NT = beta_area.shape
         Y_Z, Y_z, y_Z, y_z = rule_prob
         for w in range(2, W + 1):
@@ -349,6 +349,313 @@ class InsideAlg1D(InsideAlg): # standalone class, for sequential inputs
             X = X + span_area[:, indice, indice + w]
             beta_area[:, indice, indice + w] = X + type_area[:, indice, indice + w]
         return beta_area
+    
+    @torch.enable_grad()
+    def _viterbi_1d_proxy_auto(self, infer=True, require_marginal=False, verbose=False, **kwargs):
+        rule_prob, root_prob, term_prob = self.pcfgs
+        
+        device = rule_prob.device
+        NT = rule_prob.shape[1]
+        B, L, T = term_prob.shape[:3]
+        H = W = L
+        
+        term_prob = term_prob.view(B, W, -1)
+        
+        lr_Y_Z, *_ = lr_rule_prob = self._slice_rule_prob(rule_prob[:, :, 0], NT, T) # left-right rules
+        
+        beta_area = torch.zeros( # the real location of inside scores
+            (B, W, W + 1, NT), device=device
+        ).fill_(-MAXVAL)
+        
+        type_area = torch.zeros( # to record grad-able operations
+            (B, W, W + 1, NT), device=device
+        ).requires_grad_(infer or require_marginal)
+        
+        #####
+        sub_type_area = type_area # (B, W, W + 1, NT)
+        sub_beta_area = beta_area.clone() # (B, W, W + 1, NT)
+        new_beta_area = self._viterbi_1d_auto(
+            sub_type_area, sub_beta_area, lr_rule_prob, term_prob, verbose=False,
+        )
+        beta_area = new_beta_area #+ sub_type_area
+        #####
+        
+        final = beta_area[:, 0, W] + root_prob
+        # final = beta_area[:, 0, H, 0, W]
+        ll = final.max(-1)[0]
+    
+        def _extract_parse(ll, areas, exclude_trivial=False, **kwargs):
+            marginals = torch.autograd.grad(
+                ll.sum(), areas, create_graph=True, only_inputs=True, allow_unused=False
+            )[0]
+            if marginals.dim() == 4: # only unlabled eval is supported
+                marginals = marginals.sum(-1)
+            best_area = marginals.nonzero() # (B, X1, X2)
+            best_beta = marginals[
+                best_area[:, 0], best_area[:, 1], best_area[:, 2]
+            ]
+            if exclude_trivial:
+                w1 = (best_area[:, 2] - best_area[:, 1]) == 1
+                h1w1 = w1
+                best_area = best_area[~h1w1]
+                best_beta = best_beta[~h1w1]
+
+    #         print(torch.cat((best_area, best_beta.unsqueeze(-1)), dim=-1))
+
+            best_area = best_area[:, 1:] # trim the batch dim
+            best_area = best_area.view(B, -1, best_area.shape[-1])
+            parses = [best_area[i].cpu().tolist() for i in range(B)]        
+            return parses 
+        
+        argmax = (
+            None if not infer else _extract_parse(ll, type_area, **kwargs)
+        )
+        
+        if not require_marginal:
+            return ll, argmax, None, {"argmax": argmax, "marginal": None}
+        
+        marginal = self._compute_marginal(ll, type_area, **kwargs)
+        return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
+    
+    @torch.no_grad()
+    def _viterbi_1d_proxy_manual(self, infer=True, require_marginal=False, verbose=False, **kwargs):
+        rule_prob, root_prob, term_prob = self.pcfgs
+        
+        device = rule_prob.device
+        NT = rule_prob.shape[1]
+        B, L, T = term_prob.shape[:3]
+        H = W = L
+        
+        term_prob = term_prob.view(B, W, -1)
+        
+        lr_Y_Z, *_ = lr_rule_prob = self._slice_rule_prob(rule_prob[:, :, 0], NT, T) # left-right rules
+        
+        beta_area = torch.zeros( # the real location of inside scores
+            (B, W, W + 1, NT), device=device
+        ).fill_(-MAXVAL)
+        # TODO best_area and best_type can be merged by using bitwise shift
+        # For example, 10 bits for split points, 10 for best left symbols, and 10 for best right symbols
+        best_area = torch.zeros( # split point for every best symbol
+            (B, W, W + 1, NT), device=device
+        ).long()
+        
+        best_type = torch.zeros( # left-right / bottom-up best symbol
+            (B, W, W + 1, NT), device=device
+        ).long()
+        
+        #####
+        sub_best_area = best_area # (B, W, W + 1, NT)
+        sub_best_type = best_type
+        sub_beta_area = beta_area.clone() # (B, W, W + 1, NT)
+        new_beta_area, new_best_area, new_best_type = self._viterbi_1d_manual(
+            sub_best_area, sub_best_type, sub_beta_area, lr_rule_prob, term_prob, verbose=(y == 0),
+        )
+        beta_area = new_beta_area #+ sub_type_area
+        best_type = new_best_type
+        best_area = new_best_area
+        #####
+        final = beta_area[:, 0, W] + root_prob
+        # final = beta_area[:, 0, H, 0, W]
+        ll, s = final.max(-1) # s: best type
+        
+        def _extract_parse(ll, areas, types, exclude_trivial=False, **kwargs):
+
+            def backtrack(best, kind, x, w, s):
+                if w == 1: # s may be a pre-terminal and will be skipped by this condition, or exceptions will be raised (s >= nt).
+                    return [] if exclude_trivial else [(x, x + w)]
+                k = best[x, x + w, s].cpu().item()
+                z = kind[x, x + w, s].cpu().item()
+                l = z >> 16
+                r = z & ((1 << 16) - 1)
+                if k > 0: # left-right composition
+                    area1 = backtrack(best, kind, x, k, l)
+                    area2 = backtrack(best, kind, x + k, w - k, r)
+                return area1 + area2 + [(x, x + w)]
+
+            parses = [
+                backtrack(
+                    areas[i], types[i], 0, W, s[i].cpu().item()
+                ) for i in range(B)
+            ]
+            return parses
+        
+        argmax = (
+            None if not infer else _extract_parse(ll, best_area, best_type, **kwargs)
+        )
+        
+        if not require_marginal:
+            return ll, argmax, None, {"argmax": argmax, "marginal": None}
+        
+        marginal = self._compute_marginal(ll, type_area, **kwargs)
+        return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
+    
+    @torch.enable_grad()
+    def _mbr_1d_proxy_auto(self, areas, exclude_trivial=False, verbose=False, **kwargs):
+        device = areas.device
+        B, W, *_ = areas.shape # (B, W, W + 1)
+        beta_area = torch.zeros_like(areas).fill_(-MAXVAL)
+        type_area = torch.zeros_like(areas).requires_grad_(True)
+        
+        #####
+        sub_span_area = areas
+        sub_type_area = type_area # (B, W, W + 1)
+        sub_beta_area = beta_area.clone() # (B, W, W + 1)
+        new_beta_area = self._mbr_1d_auto(
+            sub_type_area, sub_beta_area, sub_span_area, verbose=verbose
+        )
+        beta_area = new_beta_area #+ sub_type_area
+        #####
+      
+        def _extract_parse(ll, areas, **kwargs):
+            marginals = torch.autograd.grad(
+                ll.sum(), areas, create_graph=True, only_inputs=True, allow_unused=False
+            )[0]
+            best_area = marginals.nonzero() # (B, X1, X2)
+            best_beta = marginals[
+                best_area[:, 0], best_area[:, 1], best_area[:, 2]
+            ]
+            if exclude_trivial:
+                w1 = (best_area[:, 2] - best_area[:, 1]) == 1
+                h1w1 = w1
+                best_area = best_area[~h1w1]
+                best_beta = best_beta[~h1w1]
+
+    #         print(torch.cat((best_area, best_beta.unsqueeze(-1)), dim=-1))
+
+            best_area = best_area[:, 1:] # trim the batch dim
+            best_area = best_area.view(B, -1, best_area.shape[-1])
+            parses = [best_area[i].cpu().tolist() for i in range(B)]        
+            return parses
+        ll = beta_area[:, 0, W]
+        return _extract_parse(ll, type_area, **kwargs)
+    
+    @torch.no_grad()
+    def _mbr_1d_proxy_manual(self, areas, exclude_trivial=False, verbose=False, **kwargs):
+        device = areas.device
+        B, W, *_ = areas.shape # (B, H, H + 1, W, W + 1)
+        beta_area = torch.zeros_like(areas).fill_(-MAXVAL)
+        best_area = torch.zeros_like(areas).long()
+        
+        #####
+        sub_span_area = areas
+        sub_best_area = best_area # (B, W, W + 1)
+        sub_beta_area = beta_area.clone() # (B, W, W + 1)
+        new_beta_area, new_best_area = self._mbr_1d_manual(
+            sub_best_area, sub_beta_area, sub_span_area, verbose=verbose
+        )
+        beta_area = new_beta_area #+ sub_type_area
+        best_area = new_best_area
+        #####
+        
+        def _extract_parse(best_area, **kwargs):
+            def backtrack(best, x, w):
+                if w == 1:
+                    return [] if exclude_trivial else [(x, x + w)]
+                k = best[x, x + w].cpu().item()
+                area1 = backtrack(best, x, k)
+                area2 = backtrack(best, x + k, w - k)
+                return area1 + area2 + [(x, x + w)]
+
+            parses = [
+                backtrack(best_area[i], 0, W) for i in range(B)
+            ]
+            return parses
+        return _extract_parse(best_area, **kwargs)
+    
+    def _compute_marginal(self, ll, areas, marginal_as_dict=False, **kwargs):
+        marginals = torch.autograd.grad(
+            ll.sum(), areas, create_graph=True, only_inputs=True, allow_unused=False
+        )[0]
+        if not marginal_as_dict:
+            return marginals
+        # linearization
+        scores = dict()
+        device = marginals.device
+        B, W, *_ = marginals.shape
+        for w in range(2, W + 1):
+            x = torch.arange(W + 1 - w).to(device)
+            scores[(w,)] = marginals[:, x, x + w]
+        return scores
+
+    def _extract_parse(self, ll, areas, mbr=True, auto_infer=False, **kwargs):
+        marginals = torch.autograd.grad(
+            ll.sum(), areas, create_graph=True, only_inputs=True, allow_unused=False
+        )[0]
+        if marginals.dim() == 4: # only unlabled eval is supported
+            marginals = marginals.sum(-1)
+        if mbr:
+            mbr_fn = (
+                self._mbr_1d_proxy_auto
+                if auto_infer else
+                self._mbr_1d_proxy_manual
+            )
+            return mbr_fn(marginals.detach(), **kwargs)
+        # will need max operator in _dp() but have not been implemented
+        raise NotImplementedError
+    
+    def _dp_parallel(
+        self, infer=False, require_marginal=False, verbose=False,
+        drop_1d_fn=None, **kwargs
+    ):
+        if infer and not kwargs.get("mbr", False):
+            return self._viterbi_1d_proxy_auto(
+                require_marginal=require_marginal, verbose=verbose, **kwargs
+            ) if kwargs.get("auto_infer", True) else self._viterbi_1d_proxy_manual(
+                require_marginal=require_marginal, verbose=verbose, **kwargs
+            ) # argmax version of _dp_parallel(...)
+        
+        return self._dp_serial(
+            infer=infer, require_marginal=require_marginal, verbose=verbose, 
+            drop_1d_fn=drop_1d_fn, parallel=True, **kwargs,
+        ) # added a new parameter: parallel
+    
+    def _dp_serial(
+        self, infer=False, require_marginal=False, verbose=False,
+        drop_1d_fn=None, parallel=False, **kwargs
+    ):
+        rule_prob, root_prob, term_prob = self.pcfgs
+        
+        device = rule_prob.device
+        NT = rule_prob.shape[1]
+        B, L, T = term_prob.shape[:3]
+        H = W = L
+        
+        term_prob = term_prob.view(B, W, -1)
+        
+        lr_Y_Z, *_ = lr_rule_prob = self._slice_rule_prob(rule_prob[:, :, 0], NT, T) # left-right rules
+        
+        beta_area = torch.zeros( # the real location of inside scores
+            (B, W, W + 1, NT), device=device
+        ).fill_(-MAXVAL)
+        
+        type_area = torch.zeros( # to record grad-able operations
+            (B, W, W + 1, NT), device=device
+        ).requires_grad_(infer or require_marginal)
+        
+        #####
+        sub_type_area = type_area # (B, W, W + 1, NT)
+        sub_beta_area = beta_area.clone() # (B, W, W + 1, NT)
+        new_beta_area = self._inside_1d_parallel(
+            sub_type_area, sub_beta_area, lr_rule_prob, term_prob, drop_1d_fn=drop_1d_fn, verbose=False,
+        ) if parallel else self._inside_1d_serial(
+            sub_type_area, sub_beta_area, lr_rule_prob, term_prob, drop_1d_fn=drop_1d_fn, verbose=False
+        )
+        beta_area = new_beta_area #+ sub_type_area
+        #####
+        
+        final = beta_area[:, 0, W] + root_prob
+        # final = beta_area[:, 0, H, 0, W]
+        ll = final.logsumexp(-1)
+        
+        argmax = (
+            None if not infer else self._extract_parse(ll, type_area, **kwargs)
+        )
+        
+        if not require_marginal:
+            return ll, argmax, None, {"argmax": argmax, "marginal": None}
+        
+        marginal = self._compute_marginal(ll, type_area, **kwargs)
+        return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
 
 class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
 
@@ -389,6 +696,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         type_area = torch.zeros_like(areas).requires_grad_(True)
         
         for y in range(H): # area 1 x w
+            if W < 2: continue
             sub_span_area = areas[:, y, y + 1]
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1)
             sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1)
@@ -398,6 +706,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             beta_area[:, y, y + 1] = new_beta_area #+ sub_type_area
         
         for x in range(W): # area h x 1
+            if H < 2: continue
             sub_span_area = areas[..., x, x + 1]
             sub_type_area = type_area[..., x, x + 1]
             sub_beta_area = beta_area[..., x, x + 1]
@@ -472,6 +781,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         best_area = torch.zeros_like(areas).long()
         
         for y in range(H): # area 1 x w
+            if W < 2: continue
             sub_span_area = areas[:, y, y + 1]
             sub_best_area = best_area[:, y, y + 1] # (B, W, W + 1)
             sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1)
@@ -482,6 +792,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             best_area[:, y, y + 1] = new_best_area
         
         for x in range(W): # area h x 1
+            if H < 2: continue
             sub_span_area = areas[..., x, x + 1]
             sub_best_area = best_area[..., x, x + 1]
             sub_beta_area = beta_area[..., x, x + 1].clone()
@@ -553,13 +864,13 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         return parses
     
     @torch.enable_grad()
-    def _viterbi_2d_auto(self, infer=True, require_marginal=False, verbose=False, **kwargs):
+    def _viterbi_2d_auto(self, infer=True, require_marginal=False, verbose=False, shape=None, **kwargs):
         rule_prob, root_prob, term_prob = self.pcfgs
         
         device = rule_prob.device
         NT = rule_prob.shape[1]
         B, L, T = term_prob.shape[:3]
-        H = W = int(np.sqrt(L))
+        H, W = (int(np.sqrt(L)),) * 2 if shape is None else shape[:2]
         
         term_prob = term_prob.view(B, H, W, -1)
         
@@ -575,6 +886,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         ).requires_grad_(infer or require_marginal)
         
         for y in range(H): # area 1 x w
+            if W < 2: continue
             sub_type_area = type_area[:, y, y + 1] # (B, W, W + 1, NT)
             sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1, NT)
             new_beta_area = self._viterbi_1d_auto(
@@ -583,6 +895,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             beta_area[:, y, y + 1] = new_beta_area #+ sub_type_area
         
         for x in range(W): # area h x 1
+            if H < 2: continue
             sub_type_area = type_area[..., x, x + 1, :]
             sub_beta_area = beta_area[..., x, x + 1, :].clone()
             new_beta_area = self._viterbi_1d_auto(
@@ -667,13 +980,13 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal}
     
     @torch.no_grad()
-    def _viterbi_2d_manual(self, infer=True, require_marginal=False, verbose=False, **kwargs):
+    def _viterbi_2d_manual(self, infer=True, require_marginal=False, verbose=False, shape=None, **kwargs):
         rule_prob, root_prob, term_prob = self.pcfgs
         
         device = rule_prob.device
         NT = rule_prob.shape[1]
         B, L, T = term_prob.shape[:3]
-        H = W = int(np.sqrt(L))
+        H, W = (int(np.sqrt(L)),) * 2 if shape is None else shape[:2]
         
         term_prob = term_prob.view(B, H, W, -1)
         
@@ -694,6 +1007,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         ).long()
         
         for y in range(H): # area 1 x w
+            if W < 2: continue
             sub_best_area = best_area[:, y, y + 1] # (B, W, W + 1, NT)
             sub_best_type = best_type[:, y, y + 1]
             sub_beta_area = beta_area[:, y, y + 1].clone() # (B, W, W + 1, NT)
@@ -705,6 +1019,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
             best_area[:, y, y + 1] = new_best_area
         
         for x in range(W): # area h x 1
+            if H < 2: continue
             sub_best_area = best_area[..., x, x + 1, :]
             sub_best_type = best_type[..., x, x + 1, :]
             sub_beta_area = beta_area[..., x, x + 1, :].clone()
@@ -829,14 +1144,14 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         return (row_ll + col_ll) / (H + W)
 
     def _dp_parallel(
-        self, infer=False, require_marginal=False, verbose=False,
+        self, infer=False, require_marginal=False, verbose=False, shape=None,
         drop_1d_fn=None, drop_2d_fn=None, require_1d_ll=False, **kwargs,
     ):
         if infer and not kwargs.get("mbr", False):
             return self._viterbi_2d_auto(
-                require_marginal=require_marginal, verbose=verbose, **kwargs
+                require_marginal=require_marginal, verbose=verbose, shape=shape, **kwargs
             ) if kwargs.get("auto_infer", True) else self._viterbi_2d_manual(
-                require_marginal=require_marginal, verbose=verbose, **kwargs
+                require_marginal=require_marginal, verbose=verbose, shape=shape, **kwargs
             ) # argmax version of _dp_parallel(...)
         
         rule_prob, root_prob, term_prob = self.pcfgs
@@ -844,7 +1159,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         device = rule_prob.device
         NT = rule_prob.shape[1]
         B, L, T = term_prob.shape[:3]
-        H = W = int(np.sqrt(L))
+        H, W = (int(np.sqrt(L)),) * 2 if shape is None else shape[:2]
         
         term_prob = term_prob.view(B, H, W, -1)
         
@@ -951,7 +1266,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         return ll, argmax, marginal, {"argmax": argmax, "marginal": marginal, "ll1d": ll_1d}
         
     def _dp_serial(
-        self, infer=False, require_marginal=False, verbose=False,
+        self, infer=False, require_marginal=False, verbose=False, shape=None,
         drop_1d_fn=None, drop_2d_fn=None, require_1d_ll=False, **kwargs
     ):
         rule_prob, root_prob, term_prob = self.pcfgs
@@ -959,7 +1274,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         device = rule_prob.device
         NT = rule_prob.shape[1]
         B, L, T = term_prob.shape[:3]
-        H = W = int(np.sqrt(L))
+        H, W = (int(np.sqrt(L)),) * 2 if shape is None else shape[:2]
         
         term_prob = term_prob.view(B, H, W, -1)
         

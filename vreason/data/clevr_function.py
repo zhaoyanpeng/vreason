@@ -65,7 +65,11 @@ def create_2obj_image(size, obj_hw, ids, rng, *args):
     bbox = list()
     
     o_h, o_w = obj_hw[0]
-    o_h_new, o_w_new = obj_hw[1]
+    if len(obj_hw) > 1:
+        o_h_new, o_w_new = obj_hw[1]
+        early_break = False
+    else:
+        early_break = True
     
     valid_y = H - o_h + 1
     valid_x = W - o_w + 1
@@ -81,6 +85,9 @@ def create_2obj_image(size, obj_hw, ids, rng, *args):
 
         box = (rnd_x, rnd_y, rnd_x + o_w, rnd_y + o_h)
         convas[rnd_y : rnd_y + o_h, rnd_x : rnd_x + o_w] = ids[0]
+
+        if early_break:
+            return convas.astype(int), [box]
 
         if box[1] >= o_h_new or H - box[3] >= o_h_new:
             valid_x_new = list(range(W - o_w_new + 1))
@@ -122,7 +129,11 @@ def create_2obj_fixed(size, obj_hw, ids, rng, delta):
     H, W = size
     bbox = list()
     o_h, o_w = obj_hw[0]
-    o_h_new, o_w_new = obj_hw[1]
+    if len(obj_hw) > 1:
+        o_h_new, o_w_new = obj_hw[1]
+        early_break = False
+    else:
+        early_break = True
     
     cnt, max_num_try = 0, int(H * W * 1.5)
     while True: # make sure there is space for the other object
@@ -140,6 +151,9 @@ def create_2obj_fixed(size, obj_hw, ids, rng, delta):
 
         box = (rnd_x, rnd_y, rnd_x + o_w, rnd_y + o_h)
         convas[rnd_y : rnd_y + o_h, rnd_x : rnd_x + o_w] = ids[0]
+
+        if early_break:
+            return convas.astype(int), [box]
         
         # is new x valid?
         rnd_x = rnd_x + delta[1]

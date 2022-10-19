@@ -345,9 +345,9 @@ class PCFGLossHead(MetaLossHead):
     def _estimate_entropy(self, pcfgs):
         rule_prob, root_prob, term_prob = pcfgs
         
-        # binary rules
+        # binary rules: -1 because ab rules could be empty
         lr = rule_prob[:, :, 0].logsumexp((-1, -2)) # (B, NT)
-        ab = rule_prob[:, :, 1].logsumexp((-1, -2)) # (B, NT)
+        ab = rule_prob[:, :, -1].logsumexp((-1, -2)) # (B, NT)
 
         lr_ab = torch.stack((lr, ab), -1)
         lr_ab_p = lr_ab.exp()
@@ -356,9 +356,9 @@ class PCFGLossHead(MetaLossHead):
         #print(rule_ent.cpu().numpy(), rule_ent.shape)
         #print(torch.cat((lr_ab, lr_ab_p), -1))
 
-        #####
+        ##### -1 because ab rules could be empty
         lr = rule_prob[:, :, 0] # (B, NT, NT_T, NT_T)
-        ab = rule_prob[:, :, 1] # (B, NT, NT_T, NT_T)
+        ab = rule_prob[:, :, -1] # (B, NT, NT_T, NT_T)
 
         lr_ent = -(lr.exp() * lr).sum((-1, -2)).mean(-1) # (B,)
         ab_ent = -(ab.exp() * ab).sum((-1, -2)).mean(-1) # (B,)

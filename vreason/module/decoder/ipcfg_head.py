@@ -46,6 +46,7 @@ class IPCFGDecHead(MetaDecHead):
         super().__init__(cfg, None)
         self.s_dim = cfg.s_dim
         self.z_dim = cfg.z_dim
+        self.n_set = cfg.n_set
         
         self.drop_1d_fn = mask_prob_schedule(
              1, 16, beta=cfg.beta_1d, rate=cfg.rate_1d, contrast=True,
@@ -94,6 +95,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         self.T = cfg.T
         self.NT = cfg.NT
         self.NT_T = cfg.NT + cfg.T
+        self.grid_size = cfg.grid_size
         self.vis_token_vocab = vis_token_vocab
         V = len(self.vis_token_vocab)
         self.V = V
@@ -110,7 +112,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
             nn.Linear(rule_dim, s_dim),
             ResLayer(s_dim, s_dim),
             ResLayer(s_dim, s_dim),
-            nn.Linear(s_dim, self.NT_T ** 2 * 2),
+            nn.Linear(s_dim, self.NT_T ** 2 * self.n_set),
         ) # horizon and vertical
         self.rule_mlp = nn.Sequential(*rule_modules)
         
@@ -136,7 +138,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
 
     def parameterize(self, x, mean, lvar, use_mean=False, **kwargs):
         B, HW = x.shape[:2]
-        H = W = int(np.sqrt(HW))
+        H, W = (int(np.sqrt(HW)),) * 2 if self.grid_size is None else self.grid_size
                 
         if self.z_dim > 0:
             z = mean
@@ -159,7 +161,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
             
             def estimate(mlp, branch):
                 rule_prob = F.log_softmax(mlp(nonterm_emb), -1)
-                rule_prob = rule_prob.view(*((B, self.NT, 2) + (self.NT_T,) * branch))
+                rule_prob = rule_prob.view(*((B, self.NT, self.n_set) + (self.NT_T,) * branch))
                 return rule_prob
                 
             rule_prob = estimate(self.rule_mlp, 2)
@@ -232,8 +234,8 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         require_1d_ll = self.mini_1d_ll or self.mini_1d_2d
 
         outs = self.partition(
-            infer=infer, parallel=parallel, require_marginal=require_marginal, verbose=verbose,
-            drop_1d_fn=drop_1d_fn, drop_2d_fn=drop_2d_fn, require_1d_ll=require_1d_ll, **kwargs
+            infer=infer, parallel=parallel, require_marginal=require_marginal, require_1d_ll=require_1d_ll,
+            shape=self.grid_size, drop_1d_fn=drop_1d_fn, drop_2d_fn=drop_2d_fn, verbose=verbose, **kwargs
         ) # ll, argmax, marginal, {}
         outs = (outs[0], kl, x) + outs[1:]
         return outs

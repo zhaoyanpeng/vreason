@@ -5,6 +5,7 @@ h_dim: 512
 w_dim: 512
 z_dim: ${..encoder.z_dim}
 s_dim: 256
+n_set: 2
 drop_1d: false
 rate_1d: 3.
 beta_1d: 1.
@@ -13,3 +14,4 @@ rate_2d: 3.
 beta_2d: 1.
 mini_1d_ll: ${..loss.mini_1d_ll}
 mini_1d_2d: ${..loss.mini_1d_2d}
+grid_size: null
