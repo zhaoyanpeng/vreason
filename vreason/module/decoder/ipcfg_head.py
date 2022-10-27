@@ -8,9 +8,9 @@ from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_se
 import torch.nn.functional as F
 
 from . import MetaDecHead, DECODER_HEADS_REGISTRY
-from .. import InsideAlg2D
+from .. import MAXVAL, InsideAlg1D, InsideAlg2D, InsideAlg2DLA
 
-__all__ = ["IPCFGDecHead"]
+__all__ = ["IPCFG2DLADecHead", "IPCFG2DDecHead", "IPCFG1DDecHead"]
 
 def mask_prob_schedule(
     H: int,
@@ -41,12 +41,33 @@ class ResLayer(nn.Module):
     def forward(self, x):
         return self.linear(x) + x
 
-class IPCFGDecHead(MetaDecHead):
+class BaseIPCFGDecHead(MetaDecHead):
     def __init__(self, cfg, token_vocab, **kwargs):
         super().__init__(cfg, None)
         self.s_dim = cfg.s_dim
         self.z_dim = cfg.z_dim
         self.n_set = cfg.n_set
+        
+        ########
+        self.nt_la = cfg.nt_la #nt_la # nonterminal w/ latent annotation
+
+        T, NT = cfg.T, cfg.NT
+        sli_np_h = slice(0, NT)
+        sli_np_v = slice(NT, NT + NT)
+        sli_tp_h = slice(NT + NT, NT + NT + T)
+        sli_tp_v = slice(NT + NT + T, NT + NT + T + T)
+        self.zeros = [
+            (sli_np_h, sli_tp_v), (sli_tp_v, sli_np_h),
+            (sli_np_v, sli_tp_h), (sli_tp_h, sli_np_v),
+            (sli_tp_v, sli_tp_h), (sli_tp_h, sli_tp_v),
+        ] if self.nt_la else []
+                
+        NT_, T_, NT_T_ = (NT, T, NT + T)
+        NT_, T_, NT_T_ = (
+            NT_ * 2, T_ * 2, NT_T_ * 2
+        ) if self.nt_la else (NT_, T_, NT_T_)
+        self.NT_, self.T_, self.NT_T_ = (NT_, T_, NT_T_)
+        ########
         
         self.drop_1d_fn = mask_prob_schedule(
              1, 16, beta=cfg.beta_1d, rate=cfg.rate_1d, contrast=True,
@@ -83,9 +104,9 @@ class IPCFGDecHead(MetaDecHead):
     def kl(mean, lvar):
         return -0.5 * (lvar - torch.pow(mean, 2) - torch.exp(lvar) + 1)
 
-@DECODER_HEADS_REGISTRY.register()
-class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
-    def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
+
+class ParamIPCFGDecHead(BaseIPCFGDecHead):
+    def __init__(self, cfg, token_vocab, vis_token_vocab=None, **kwargs):
         super().__init__(cfg, None)
         h_dim = cfg.h_dim
         w_dim = cfg.w_dim
@@ -100,7 +121,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         V = len(self.vis_token_vocab)
         self.V = V
         
-        self.term_emb = nn.Parameter(torch.randn(self.T, s_dim))
+        self.term_emb = nn.Parameter(torch.randn(self.T_, s_dim))
         self.nonterm_emb = nn.Parameter(torch.randn(self.NT, s_dim))
         self.root_emb = nn.Parameter(torch.randn(1, s_dim))
         
@@ -112,7 +133,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
             nn.Linear(rule_dim, s_dim),
             ResLayer(s_dim, s_dim),
             ResLayer(s_dim, s_dim),
-            nn.Linear(s_dim, self.NT_T ** 2 * self.n_set),
+            nn.Linear(s_dim, self.NT_T_ ** 2 * self.n_set),
         ) # horizon and vertical
         self.rule_mlp = nn.Sequential(*rule_modules)
         
@@ -121,7 +142,7 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
             nn.Linear(root_dim, s_dim),
             ResLayer(s_dim, s_dim),
             ResLayer(s_dim, s_dim),
-            nn.Linear(s_dim, self.NT)
+            nn.Linear(s_dim, self.NT_)
         )
         self.root_mlp = nn.Sequential(*root_modules)
         
@@ -160,8 +181,17 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
                 nonterm_emb = torch.cat([nonterm_emb, z], dim=-1)
             
             def estimate(mlp, branch):
-                rule_prob = F.log_softmax(mlp(nonterm_emb), -1)
-                rule_prob = rule_prob.view(*((B, self.NT, self.n_set) + (self.NT_T,) * branch))
+                if not self.nt_la:
+                    rule_prob = F.log_softmax(mlp(nonterm_emb), -1)
+                    rule_prob = rule_prob.view(*((B, self.NT, self.n_set) + (self.NT_T_,) * branch))
+                else:
+                    logits = mlp(nonterm_emb).view(*(
+                        (B, self.NT, self.n_set) + (self.NT_T_,) * branch
+                    ))
+                    for a, b in self.zeros:
+                        logits[..., a, b] = -MAXVAL
+                    rule_prob = F.log_softmax(logits.view(*(B, self.NT, self.n_set, -1)), -1)
+                    rule_prob = rule_prob.view(*((B, self.NT, self.n_set) + (self.NT_T_,) * branch))
                 return rule_prob
                 
             rule_prob = estimate(self.rule_mlp, 2)
@@ -181,14 +211,14 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
             )
             if self.z_dim > 0:
                 z = self.z.unsqueeze(1).unsqueeze(2).expand(
-                    -1, H * W, self.T, -1
+                    -1, H * W, self.T_, -1
                 )
                 term_emb = torch.cat([term_emb, z], dim=-1)
             mlp = self.term_mlp
             term_prob = term_prob_old = F.log_softmax(mlp(term_emb), -1)
             
             x = x.reshape(B, -1)
-            indices = x.unsqueeze(-1).expand(-1, -1, self.T).unsqueeze(-1)
+            indices = x.unsqueeze(-1).expand(-1, -1, self.T_).unsqueeze(-1)
             term_prob = torch.gather(term_prob, -1, indices).squeeze(-1)
             return term_prob
         
@@ -228,6 +258,39 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
                 term_prob.shape, torch.isnan(term_prob).any()
             )
 
+            print(
+                (root_prob.exp() == 0).sum(),
+                (rule_prob.exp() == 0).sum(),
+                (term_prob.exp() == 0).sum()
+            )
+            
+            if self.nt_la: 
+                X_H_H, X_V_V, X_H_V, X_V_H, lr_rule_prob, ab_rule_prob = self._slice_rule_prob(rule_prob, self.NT, self.T)
+                rule_p = (X_H_H, X_V_V, X_H_V, X_V_H) + lr_rule_prob[1:] + ab_rule_prob[1:]
+
+                all_p = []
+                for a, b in self.zeros:
+                    p = rule_prob[..., a, b].exp().sum((-1, -2))
+                    all_p.append(p)
+                all_p = torch.stack(all_p, -1)
+                #print(all_p.sum(-1), all_p.shape)
+                #print((all_p == 0).all())
+
+                all_p = all_p.sum(-1)
+                print(torch.allclose(torch.zeros_like(all_p), all_p))
+
+                all_p = []
+                for x in rule_p:
+                    p = x.exp().sum((-1, -2))
+                    all_p.append(p)
+                all_p = torch.stack(all_p, -1)
+                #print(all_p.sum(-1), all_p.shape)
+                #print((all_p == 1).all())
+
+                all_p = all_p.sum(-1)
+                print(torch.allclose(torch.ones_like(all_p), all_p))
+
+
         drop_1d_fn = self.drop_1d_fn if self.training else None
         drop_2d_fn = self.drop_2d_fn if self.training else None
 
@@ -239,3 +302,21 @@ class NaiveIPCFGDecHead(IPCFGDecHead, InsideAlg2D):
         ) # ll, argmax, marginal, {}
         outs = (outs[0], kl, x) + outs[1:]
         return outs
+
+
+@DECODER_HEADS_REGISTRY.register()
+class IPCFG1DDecHead(ParamIPCFGDecHead, InsideAlg1D):
+    def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
+        super().__init__(cfg, None, vis_token_vocab)
+
+@DECODER_HEADS_REGISTRY.register()
+class IPCFG2DDecHead(ParamIPCFGDecHead, InsideAlg2D):
+    def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
+        super().__init__(cfg, None, vis_token_vocab)
+
+@DECODER_HEADS_REGISTRY.register()
+class IPCFG2DLADecHead(ParamIPCFGDecHead, InsideAlg2DLA):
+    def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
+        super().__init__(cfg, None, vis_token_vocab)
+        assert self.nt_la, f"self.nt_la ({self.nt_la}) must be true for nonterminal w/ annotations."
+

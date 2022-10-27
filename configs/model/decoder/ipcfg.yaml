@@ -1,4 +1,4 @@
-name: NaiveIPCFGDecHead
+name: IPCFG2DDecHead
 NT: 20
 T: 10 
 h_dim: 512
@@ -6,6 +6,7 @@ w_dim: 512
 z_dim: ${..encoder.z_dim}
 s_dim: 256
 n_set: 2
+nt_la: false
 drop_1d: false
 rate_1d: 3.
 beta_1d: 1.
