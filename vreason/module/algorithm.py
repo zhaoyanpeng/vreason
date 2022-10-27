@@ -267,7 +267,7 @@ class InsideAlg1D(InsideAlg): # standalone class, for sequential inputs
                 sl.unsqueeze(2).unsqueeze(-1) + # (B, k, 1, r, 1)
                 sr.unsqueeze(2).unsqueeze(-2) + # (B, k, 1, 1, r)
                 rule_prob.unsqueeze(1) # (B, 1, S, r, r)
-            ).amax((3, 4))
+            ).flatten(-2, -1).max(-1)[0] #.amax((3, 4))
             return beta
         
         # special case: span length is 2
@@ -908,7 +908,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
                 sl.unsqueeze(1).unsqueeze(-2) + # (B, 1, k, s, r, 1, x)
                 sr.unsqueeze(1).unsqueeze(-3) + # (B, 1, k, s, 1, r, x)
                 rule_prob.unsqueeze(2).unsqueeze(2).unsqueeze(-1) # (B, S, 1, 1, r, r, 1)
-            ).amax((-2, -3, -4)) # (B, S, k, x)
+            ).flatten(-4, -2).max(-2)[0] #.amax((-2, -3, -4)) # (B, S, k, x)
             return beta
             
         # area >= 2 x 2
@@ -1139,7 +1139,7 @@ class InsideAlg2D(InsideAlg1D): # standalone class, for two-dimensional inputs
         for x in range(W): # area h x 1
             sub_beta_area = beta_area[:, 0, H, x, x + 1] # (B, NT)
             sub_ll = (sub_beta_area + root_prob).logsumexp(-1)
-            col_ll += col_ll
+            col_ll += sub_ll
         
         return (row_ll + col_ll) / (H + W)
 
