@@ -254,39 +254,39 @@ class ClevrImageTextPandasForDalleMini(torch.utils.data.Dataset):
         # scene data
         self.H = self.W = 16
         split = "train" if self.train else "val"
-        scene_file = f"{cfg.more_root}/scenes/CLEVR_{split}_scenes.all.json"
-        scene_data = json.load(open(scene_file, "r"))["scenes"]
-        self.bbox_dict = extract_bbox(
-            all_df, scene_data, d=cfg.min_pixel_num / self.H, rotate=self.rot90_image > 0.
-        )
-        
-        # filter by remainder
-        def filter_by_vid(row, min_vid, max_vid, divider, scenes, object_name):
-            try:
-                #x = row["image"]
-                #x = re.match(".*?_(\d+)\.png", x)
-                #x = int(x.groups()[0]) % divider
-                x = row.vid % divider
-                if x < min_vid or x > max_vid:
-                    return False
-                if scenes is not None and object_name is not None:
-                    for obj in scenes[str(row.vid)]["objects"]:
-                        name = obj["category"]
-                        if re.search(object_name, name) is not None:
-                            return True
-                    return False
-                return True
-            except Exception as e:
-                return False 
-        partial_vid_filter_fn = partial(
-            filter_by_vid,
-            min_vid=min_vid,
-            max_vid=max_vid,
-            divider=divider,
-            object_name=self.object_name,
-            scenes=scene_data,
-        )
-        all_df = all_df[all_df.apply(partial_vid_filter_fn, axis=1)]
+        # scene_file = f"{cfg.more_root}/scenes/CLEVR_{split}_scenes.all.json"
+        # scene_data = json.load(open(scene_file, "r"))["scenes"]
+        # self.bbox_dict = extract_bbox(
+        #     all_df, scene_data, d=cfg.min_pixel_num / self.H, rotate=self.rot90_image > 0.
+        # )
+        # 
+        # # filter by remainder
+        # def filter_by_vid(row, min_vid, max_vid, divider, scenes, object_name):
+        #     try:
+        #         #x = row["image"]
+        #         #x = re.match(".*?_(\d+)\.png", x)
+        #         #x = int(x.groups()[0]) % divider
+        #         x = row.vid % divider
+        #         if x < min_vid or x > max_vid:
+        #             return False
+        #         if scenes is not None and object_name is not None:
+        #             for obj in scenes[str(row.vid)]["objects"]:
+        #                 name = obj["category"]
+        #                 if re.search(object_name, name) is not None:
+        #                     return True
+        #             return False
+        #         return True
+        #     except Exception as e:
+        #         return False 
+        # partial_vid_filter_fn = partial(
+        #     filter_by_vid,
+        #     min_vid=min_vid,
+        #     max_vid=max_vid,
+        #     divider=divider,
+        #     object_name=self.object_name,
+        #     scenes=scene_data,
+        # )
+        # all_df = all_df[all_df.apply(partial_vid_filter_fn, axis=1)]
 
         # select
         if chunk is not None:

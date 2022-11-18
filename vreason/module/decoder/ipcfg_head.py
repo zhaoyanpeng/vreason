@@ -157,7 +157,7 @@ class ParamIPCFGDecHead(BaseIPCFGDecHead):
         self._count_rnd_consumed()
         self._reset_parameters()
 
-    def parameterize(self, x, mean, lvar, use_mean=False, **kwargs):
+    def parameterize(self, x, mean, lvar, use_mean=False, if_partition=False, **kwargs):
         B, HW = x.shape[:2]
         H, W = (int(np.sqrt(HW)),) * 2 if self.grid_size is None else self.grid_size
                 
@@ -181,16 +181,16 @@ class ParamIPCFGDecHead(BaseIPCFGDecHead):
                 nonterm_emb = torch.cat([nonterm_emb, z], dim=-1)
             
             def estimate(mlp, branch):
-                if not self.nt_la:
-                    rule_prob = F.log_softmax(mlp(nonterm_emb), -1)
-                    rule_prob = rule_prob.view(*((B, self.NT, self.n_set) + (self.NT_T_,) * branch))
+                if self.n_set == 1: # duplicate rule prob.: shared rules between H & V composition
+                    rule_prob = rule_prob.expand(*((-1, -1, 2) + (-1,) * branch))
                 else:
                     logits = mlp(nonterm_emb).view(*(
                         (B, self.NT, self.n_set) + (self.NT_T_,) * branch
                     ))
                     for a, b in self.zeros:
                         logits[..., a, b] = -MAXVAL
-                    rule_prob = F.log_softmax(logits.view(*(B, self.NT, self.n_set, -1)), -1)
+                    # rule_prob = F.log_softmax(logits.view(*(B, self.NT, self.n_set, -1)), -1)
+                    rule_prob = logits.view(*(B, self.NT, self.n_set, -1))
                     rule_prob = rule_prob.view(*((B, self.NT, self.n_set) + (self.NT_T_,) * branch))
                 return rule_prob
                 
@@ -202,7 +202,8 @@ class ParamIPCFGDecHead(BaseIPCFGDecHead):
             if self.z_dim > 0:
                 root_emb = torch.cat([root_emb, self.z], dim=-1)
             mlp = self.root_mlp
-            root_prob = F.log_softmax(mlp(root_emb), -1)
+            # root_prob = F.log_softmax(mlp(root_emb), -1)
+            root_prob = mlp(root_emb)
             return root_prob
         
         def terms(x):
@@ -215,11 +216,15 @@ class ParamIPCFGDecHead(BaseIPCFGDecHead):
                 )
                 term_emb = torch.cat([term_emb, z], dim=-1)
             mlp = self.term_mlp
-            term_prob = term_prob_old = F.log_softmax(mlp(term_emb), -1)
-            
-            x = x.reshape(B, -1)
-            indices = x.unsqueeze(-1).expand(-1, -1, self.T_).unsqueeze(-1)
-            term_prob = torch.gather(term_prob, -1, indices).squeeze(-1)
+            # term_prob = F.log_softmax(mlp(term_emb), -1)
+            term_prob = mlp(term_emb)
+
+            if if_partition:
+                term_prob = torch.logsumexp(term_prob, dim=-1).squeeze(-1)
+            else: 
+                x = x.reshape(B, -1)
+                indices = x.unsqueeze(-1).expand(-1, -1, self.T_).unsqueeze(-1)
+                term_prob = torch.gather(term_prob, -1, indices).squeeze(-1)
             return term_prob
         
         self.pcfgs = (rules(x), roots(x), terms(x))
@@ -246,7 +251,7 @@ class ParamIPCFGDecHead(BaseIPCFGDecHead):
             assert mean is not None and lvar is not None, f"need latent z but it is None"
 
         x = v_seq
-        pcfgs, kl, *_ = self.parameterize(x, mean, lvar, use_mean=infer)
+        pcfgs, kl, *_ = self.parameterize(x, mean, lvar, use_mean=infer, if_partition=False)
         
         if verbose:
             rule_prob, root_prob, term_prob = self.pcfgs
@@ -300,8 +305,16 @@ class ParamIPCFGDecHead(BaseIPCFGDecHead):
             infer=infer, parallel=parallel, require_marginal=require_marginal, require_1d_ll=require_1d_ll,
             shape=self.grid_size, drop_1d_fn=drop_1d_fn, drop_2d_fn=drop_2d_fn, verbose=verbose, **kwargs
         ) # ll, argmax, marginal, {}
-        outs = (outs[0], kl, x) + outs[1:]
-        return outs
+        # outs = (outs[0], kl, x) + outs[1:]
+
+        pcfgs_2, kl, *_ = self.parameterize(x, mean, lvar, use_mean=infer, if_partition=True)
+        outs_2 = self.partition(
+            infer=infer, parallel=parallel, require_marginal=require_marginal, require_1d_ll=require_1d_ll,
+            shape=self.grid_size, drop_1d_fn=drop_1d_fn, drop_2d_fn=drop_2d_fn, verbose=verbose, **kwargs
+        ) # ll, argmax, marginal, {}
+        # outs_2 = (outs_2[0], kl, x) + outs_2[1:]
+
+        return (outs[0] - outs_2[0], kl, x) + outs[1:]
 
 
 @DECODER_HEADS_REGISTRY.register()
@@ -319,4 +332,3 @@ class IPCFG2DLADecHead(ParamIPCFGDecHead, InsideAlg2DLA):
     def __init__(self, cfg, txt_token_vocab, vis_token_vocab=None, **kwargs):
         super().__init__(cfg, None, vis_token_vocab)
         assert self.nt_la, f"self.nt_la ({self.nt_la}) must be true for nonterminal w/ annotations."
-
